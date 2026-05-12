@@ -55,6 +55,7 @@ class Scenario:
     ancilla_budget: int = 0
     max_stabilizers_per_walk: int = 3
     max_walks: int = 20
+    n_solution_samples: int = 1
     seed_val: int = 137
 
 
@@ -93,14 +94,16 @@ def _scenarios() -> List[Scenario]:
             initial_stabilizers=_fh_symmetries(8),
             errors=_all_single_qubit_paulis(8, "X"),
             ancilla_budget=2,
-            max_stabilizers_per_walk=3, max_walks=50,
+            max_stabilizers_per_walk=3, max_walks=10,
+            n_solution_samples=16,
         ),
         Scenario(
             name="FH [[16,14]] + weight-1 X (stress)",
             initial_stabilizers=_fh_symmetries(16),
             errors=_all_single_qubit_paulis(16, "X"),
             ancilla_budget=4,
-            max_stabilizers_per_walk=4, max_walks=50,
+            max_stabilizers_per_walk=4, max_walks=10,
+            n_solution_samples=16,
         ),
     ]
 
@@ -113,6 +116,7 @@ def _run(sc: Scenario):
         ancilla_budget=sc.ancilla_budget,
         max_stabilizers_per_walk=sc.max_stabilizers_per_walk,
         max_walks=sc.max_walks,
+        n_solution_samples=sc.n_solution_samples,
         seed_val=sc.seed_val,
     )
     elapsed = time.perf_counter() - t0

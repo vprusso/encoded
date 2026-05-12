@@ -406,6 +406,33 @@ class TestRandomWalkExtend(unittest.TestCase):
         self.assertEqual(max(len(g) for g in result.code), 3)
         self.assertEqual(len(result.code), 2)
 
+    def test_smart_walk_beats_random_walk_on_fh_8_6(self):
+        """n_solution_samples > 1 should hit the slide-14 [[10,6]] target far more
+        often than n_solution_samples=1 (pure random walk). At n_samples=1 the hit
+        rate is ~4% for the optimal 2-stabilizer extension; at n_samples=16 it's
+        ~100%."""
+        g_up = stim.PauliString("Z_Z_Z_Z_")
+        g_down = stim.PauliString("_Z_Z_Z_Z")
+        stabilizers = [g_up, g_down]
+        errors = [stim.PauliString("_" * 8)]
+        for i in range(8):
+            mask = [0] * 8
+            mask[i] = 1
+            errors.append(stim.PauliString(mask))
+
+        common_kwargs = dict(
+            stabilizers=stabilizers, errors=errors, ancilla_budget=2,
+            max_stabilizers_per_walk=3, max_walks=20, seed_val=137,
+        )
+        random_result = random_walk_extend(**common_kwargs, n_solution_samples=1)
+        smart_result = random_walk_extend(**common_kwargs, n_solution_samples=16)
+        # Smart walk must succeed more often than random walk (strict improvement,
+        # not just equality — under this seed random gets ~half, smart gets all).
+        self.assertGreater(smart_result.successful_walks, random_result.successful_walks)
+        # And the best code it returns should be the slide-14 [[10,6]] (2 stabs added).
+        self.assertTrue(smart_result.succeeded)
+        self.assertEqual(smart_result.n_stabilizers_added, 2)
+
     def test_ancilla_budget_and_extra_support_are_mutually_exclusive(self):
         with self.assertRaises(ValueError):
             random_walk_extend(
