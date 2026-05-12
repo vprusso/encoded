@@ -10,6 +10,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from encoded import diagonalize
-from encoded import repetition_code
-from encoded import LST
+for _mod in ("diagonalize", "repetition_code", "LST"):
+    try:
+        __import__(f"encoded.{_mod}")
+    except ImportError:
+        pass
