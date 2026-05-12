@@ -349,6 +349,7 @@ def random_walk_extend(
     stabilizers: List[stim.PauliString],
     errors: List[stim.PauliString],
     extra_support: Optional[stim.PauliString] = None,
+    ancilla_budget: int = 0,
     max_stabilizers_per_walk: int = 1,
     max_walks: int = 10,
     seed_val: int = 137,
@@ -369,11 +370,30 @@ def random_walk_extend(
     errors - The single-Pauli errors the extended code should make correctable.
     extra_support - If given, every new generator gets this Pauli appended on a new
         ancilla qubit; all prior generators are padded with identity. So a walk of
-        depth `d` with single-qubit `extra_support` adds `d` ancilla qubits.
+        depth `d` with single-qubit `extra_support` adds `d` ancilla qubits. Mutually
+        exclusive with `ancilla_budget`.
+    ancilla_budget - Number of shared ancilla qubits to pre-allocate up front. With
+        `ancilla_budget=m`, every initial generator is padded with `m` identities and
+        every error gets `m` identities appended (errors act only on the original data
+        qubits). Each added stabilizer can then place arbitrary support on any of the
+        n+m qubits, so multiple stabilizers can SHARE the same ancilla — matching the
+        slide 14 hand-design which uses 2 ancillae for 2 added stabilizers on FH [[8,6]]
+        rather than 2 ancillae per stabilizer.
     max_stabilizers_per_walk - Cap on stabilizers added per walk. Walks can finish
         early if uncorrectables hit zero before this cap.
     max_walks - Number of independent walks (the tree exploration budget).
     seed_val - RNG seed."""
+
+    if ancilla_budget > 0 and extra_support is not None:
+        raise ValueError(
+            "Specify either `ancilla_budget` (shared ancilla register, set once at the "
+            "start of each walk) or `extra_support` (one fresh ancilla per step), not both."
+        )
+
+    if ancilla_budget > 0:
+        pad = stim.PauliString("_" * ancilla_budget)
+        stabilizers = [g + pad for g in stabilizers]
+        errors = [e + pad for e in errors]
 
     seed(seed_val)
     initial_count = len(stabilizers)

@@ -392,6 +392,28 @@ class TestRandomWalkExtend(unittest.TestCase):
         if result.successful_walks > 0:
             self.assertTrue(result.succeeded)
 
+    def test_ancilla_budget_equivalent_to_extra_support_on_single_step(self):
+        """For a single-step walk, ancilla_budget=1 should be equivalent in shape to
+        extra_support=single-qubit (both produce a 3-qubit result for ZZ + {X1,X2})."""
+        stabilizers = [stim.PauliString("ZZ")]
+        errors = [stim.PauliString("X_"), stim.PauliString("_X")]
+        result = random_walk_extend(
+            stabilizers, errors, ancilla_budget=1,
+            max_stabilizers_per_walk=1, max_walks=10, seed_val=12,
+        )
+        self.assertTrue(result.succeeded)
+        # Result code lives on 3 qubits, 2 stabilizers (= [[3,1]]).
+        self.assertEqual(max(len(g) for g in result.code), 3)
+        self.assertEqual(len(result.code), 2)
+
+    def test_ancilla_budget_and_extra_support_are_mutually_exclusive(self):
+        with self.assertRaises(ValueError):
+            random_walk_extend(
+                [stim.PauliString("ZZ")], [stim.PauliString("X_")],
+                extra_support=stim.PauliString("Z"),
+                ancilla_budget=1,
+            )
+
     def test_failure_signal_when_budget_too_small(self):
         """If max_stabilizers_per_walk is smaller than the actual extension needs,
         every walk should fail and succeeded must be False."""

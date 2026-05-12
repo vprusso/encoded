@@ -52,6 +52,7 @@ class Scenario:
     initial_stabilizers: List[stim.PauliString]
     errors: List[stim.PauliString]
     extra_support: Optional[stim.PauliString] = None
+    ancilla_budget: int = 0
     max_stabilizers_per_walk: int = 3
     max_walks: int = 20
     seed_val: int = 137
@@ -74,32 +75,32 @@ def _scenarios() -> List[Scenario]:
             max_stabilizers_per_walk=2, max_walks=15,
         ),
         Scenario(
-            name="FH [[4,2]] + weight-1 X (slide 13 target)",
+            name="FH [[4,2]] + weight-1 X (slide 13)",
             initial_stabilizers=_fh_symmetries(4),
             errors=_all_single_qubit_paulis(4, "X"),
-            extra_support=stim.PauliString("Z"),
+            ancilla_budget=1,
             max_stabilizers_per_walk=2, max_walks=20,
         ),
         Scenario(
             name="FH [[4,2]] + all weight-1 (slide 34)",
             initial_stabilizers=_fh_symmetries(4),
             errors=_all_single_qubit_paulis(4),
-            extra_support=stim.PauliString("Z"),
+            ancilla_budget=3,
             max_stabilizers_per_walk=4, max_walks=30,
         ),
         Scenario(
-            name="FH [[8,6]] + weight-1 X (slide 14 target)",
+            name="FH [[8,6]] + weight-1 X (slide 14)",
             initial_stabilizers=_fh_symmetries(8),
             errors=_all_single_qubit_paulis(8, "X"),
-            extra_support=stim.PauliString("Z"),
-            max_stabilizers_per_walk=3, max_walks=20,
+            ancilla_budget=2,
+            max_stabilizers_per_walk=3, max_walks=50,
         ),
         Scenario(
             name="FH [[16,14]] + weight-1 X (stress)",
             initial_stabilizers=_fh_symmetries(16),
             errors=_all_single_qubit_paulis(16, "X"),
-            extra_support=stim.PauliString("Z"),
-            max_stabilizers_per_walk=8, max_walks=15,
+            ancilla_budget=4,
+            max_stabilizers_per_walk=4, max_walks=50,
         ),
     ]
 
@@ -109,6 +110,7 @@ def _run(sc: Scenario):
     result = random_walk_extend(
         sc.initial_stabilizers, sc.errors,
         extra_support=sc.extra_support,
+        ancilla_budget=sc.ancilla_budget,
         max_stabilizers_per_walk=sc.max_stabilizers_per_walk,
         max_walks=sc.max_walks,
         seed_val=sc.seed_val,
