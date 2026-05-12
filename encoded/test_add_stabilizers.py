@@ -5,7 +5,7 @@ import random
 from encoded.add_stabilizers import (
     _form_linear_system, add_stabilizer, is_in_stabilizer_group, knill_laflamme_cost_function,
     build_code_randomly, prune_duplicate_pauli_strings, random_depth_first_search,
-    _legacy_group_membership_check,
+    _legacy_group_membership_check, random_walk_extend, get_uncorrectable_errors,
 )
 
 class TestLinearSystem(unittest.TestCase):
@@ -306,6 +306,68 @@ class TestGroupMembershipAgreesWithLegacy(unittest.TestCase):
                     prod = prod * generators[i]
             self.assertTrue(is_in_stabilizer_group(prod, generators))
             self.assertTrue(_legacy_group_membership_check(prod, generators))
+
+
+class TestRandomWalkExtend(unittest.TestCase):
+    """random_walk_extend: structured WalkResult + tie-breaking + telemetry."""
+
+    def test_repetition_extension_succeeds(self):
+        """ZZ + {X1,X2} should be correctable by adding one ancilla + one stabilizer."""
+        stabilizers = [stim.PauliString("ZZ")]
+        errors = [stim.PauliString("X_"), stim.PauliString("_X")]
+        result = random_walk_extend(
+            stabilizers, errors, extra_support=stim.PauliString("Z"),
+            max_stabilizers_per_walk=1, max_walks=10, seed_val=12,
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.uncorrectables_remaining, 0)
+        self.assertEqual(result.n_stabilizers_added, 1)
+        self.assertEqual(len(result.walks), 10)
+        # Confirm the returned code actually has no uncorrectable errors.
+        self.assertEqual(len(get_uncorrectable_errors(result.code, errors)), 0)
+
+    def test_telemetry_consistency(self):
+        """successful_walks count must equal the # of walks with uncorrectables=0."""
+        stabilizers = [stim.PauliString("ZZ_"), stim.PauliString("_ZZ")]
+        errors = [stim.PauliString("___"), stim.PauliString("Z__"),
+                  stim.PauliString("_Z_"), stim.PauliString("__Z")]
+        result = random_walk_extend(
+            stabilizers, errors, extra_support=stim.PauliString("X"),
+            max_stabilizers_per_walk=1, max_walks=15, seed_val=12,
+        )
+        explicit = sum(1 for w in result.walks if w.uncorrectables_remaining == 0)
+        self.assertEqual(result.successful_walks, explicit)
+        # If any walk succeeded, the returned best code should be successful too.
+        if result.successful_walks > 0:
+            self.assertTrue(result.succeeded)
+
+    def test_failure_signal_when_budget_too_small(self):
+        """If max_stabilizers_per_walk is smaller than the actual extension needs,
+        every walk should fail and succeeded must be False."""
+        # Shor seed needs to add at least 2 X-stabilizers to correct phase flips —
+        # cap walks at 1 stabilizer so they can't possibly succeed.
+        stabilizers = [
+            stim.PauliString("ZZ_______"),
+            stim.PauliString("_ZZ______"),
+            stim.PauliString("___ZZ____"),
+            stim.PauliString("____ZZ___"),
+            stim.PauliString("______ZZ_"),
+            stim.PauliString("_______ZZ"),
+        ]
+        # All single-qubit errors.
+        errs = [stim.PauliString("_________")]
+        for i in range(9):
+            for p in (1, 2, 3):
+                mask = [0] * 9
+                mask[i] = p
+                errs.append(stim.PauliString(mask))
+        result = random_walk_extend(
+            stabilizers, errs,
+            max_stabilizers_per_walk=1, max_walks=5, seed_val=12,
+        )
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.successful_walks, 0)
+        self.assertGreater(result.uncorrectables_remaining, 0)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from typing import List, Tuple, Optional, Set, Collection
 from warnings import warn
+from dataclasses import dataclass, field
 import itertools
 import functools
 from random import randrange, seed, sample
@@ -306,6 +307,103 @@ def random_depth_first_search(
             best_code = deepcopy(temp_stabilizers)
             best_num_uncorredtable = len(uncorrectables)
     return best_code
+
+
+@dataclass
+class PerWalkResult:
+    """Outcome of a single walk down the (which-error × which-solution) tree."""
+    stabilizers_added: int
+    uncorrectables_remaining: int
+
+    @property
+    def succeeded(self) -> bool:
+        return self.uncorrectables_remaining == 0
+
+
+@dataclass
+class WalkResult:
+    """Aggregate result of `random_walk_extend`.
+
+    `code` is the best stabilizer set found, picked by the lexicographic min of
+    (uncorrectables_remaining, stabilizers_added) so that successful walks beat
+    failed ones, and among successful walks, shorter extensions beat longer ones
+    (preserving more logical qubits)."""
+    code: List[stim.PauliString]
+    succeeded: bool
+    uncorrectables_remaining: int
+    n_stabilizers_added: int
+    n_walks: int
+    successful_walks: int
+    walks: List[PerWalkResult] = field(default_factory=list)
+
+
+def random_walk_extend(
+    stabilizers: List[stim.PauliString],
+    errors: List[stim.PauliString],
+    extra_support: Optional[stim.PauliString] = None,
+    max_stabilizers_per_walk: int = 1,
+    max_walks: int = 10,
+    seed_val: int = 137,
+) -> WalkResult:
+    """Slide-33 random walk: at each step pick a random uncorrectable error product
+    and a random solution from the resulting affine system, add it to the group,
+    repeat up to `max_stabilizers_per_walk` times per walk and `max_walks` walks
+    total. Returns the best code found together with per-walk telemetry.
+
+    Differs from `random_depth_first_search` in three ways: (1) returns a structured
+    result with success signal + telemetry instead of just the code, (2) tie-breaks
+    "best" by (uncorrectables_remaining, stabilizers_added) so a successful walk with
+    fewer added stabilizers wins over a longer successful walk, (3) the original
+    function is left untouched so existing experiments keep working.
+
+    Arguments:
+    stabilizers - The initial stabilizer generators.
+    errors - The single-Pauli errors the extended code should make correctable.
+    extra_support - If given, every new generator gets this Pauli appended on a new
+        ancilla qubit; all prior generators are padded with identity. So a walk of
+        depth `d` with single-qubit `extra_support` adds `d` ancilla qubits.
+    max_stabilizers_per_walk - Cap on stabilizers added per walk. Walks can finish
+        early if uncorrectables hit zero before this cap.
+    max_walks - Number of independent walks (the tree exploration budget).
+    seed_val - RNG seed."""
+
+    seed(seed_val)
+    initial_count = len(stabilizers)
+    initial_uncorrectables = len(get_uncorrectable_errors(stabilizers, errors))
+
+    best_code = deepcopy(stabilizers)
+    best_key: Tuple[int, int] = (initial_uncorrectables, 0)  # (remaining, added)
+    walks: List[PerWalkResult] = []
+
+    for _ in range(max_walks):
+        temp = deepcopy(stabilizers)
+        for _ in range(max_stabilizers_per_walk):
+            uncorrectables = get_uncorrectable_errors(temp, errors)
+            if not uncorrectables:
+                break
+            new_err = uncorrectables[randrange(0, len(uncorrectables))]
+            temp = add_stabilizer(
+                temp, [new_err], extra_support=extra_support, choose_solution_randomly=True,
+            )
+
+        added = len(temp) - initial_count
+        remaining = len(get_uncorrectable_errors(temp, errors))
+        walks.append(PerWalkResult(stabilizers_added=added, uncorrectables_remaining=remaining))
+
+        key = (remaining, added)
+        if key < best_key:
+            best_code = deepcopy(temp)
+            best_key = key
+
+    return WalkResult(
+        code=best_code,
+        succeeded=(best_key[0] == 0),
+        uncorrectables_remaining=best_key[0],
+        n_stabilizers_added=best_key[1],
+        n_walks=max_walks,
+        successful_walks=sum(1 for w in walks if w.succeeded),
+        walks=walks,
+    )
 
 
 if __name__ == "__main__":
