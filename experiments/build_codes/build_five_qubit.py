@@ -1,5 +1,5 @@
 import stim
-from encoded.add_stabilizers import build_code_randomly, test_group_membership
+from encoded.add_stabilizers import build_code_randomly, is_in_stabilizer_group
 
 def all_single_qubit_errors(n: int):
     all_errors = [stim.PauliString('_' * n)]
@@ -29,5 +29,5 @@ for e1 in errors:
         if e1 != e2:
             e = e1 * e2
             anticommute_tests = [not e.commutes(gen) for gen in new_stabilizers]
-            in_group = test_group_membership(e, new_stabilizers)
+            in_group = is_in_stabilizer_group(e, new_stabilizers)
             assert any(anticommute_tests) or in_group, f"e1 = {e1}, e2 = {e2}"

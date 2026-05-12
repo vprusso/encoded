@@ -1,9 +1,11 @@
 import unittest
 import numpy as np
 import stim
+import random
 from encoded.add_stabilizers import (
-    _form_linear_system, add_stabilizer, test_group_membership, knill_laflamme_cost_function,
-    build_code_randomly, prune_duplicate_pauli_strings, random_depth_first_search
+    _form_linear_system, add_stabilizer, is_in_stabilizer_group, knill_laflamme_cost_function,
+    build_code_randomly, prune_duplicate_pauli_strings, random_depth_first_search,
+    _legacy_group_membership_check,
 )
 
 class TestLinearSystem(unittest.TestCase):
@@ -92,7 +94,7 @@ class TestGroupMembership(unittest.TestCase):
             stim.PauliString("X_"),
             stim.PauliString("_X")
         ]
-        self.assertTrue(test_group_membership(operator, generators))
+        self.assertTrue(is_in_stabilizer_group(operator, generators))
 
     def test_repetition(self):
         operator = stim.PauliString("Z_Z")
@@ -100,7 +102,7 @@ class TestGroupMembership(unittest.TestCase):
             stim.PauliString("ZZ_"),
             stim.PauliString("_ZZ")
         ]
-        self.assertTrue(test_group_membership(operator, generators))
+        self.assertTrue(is_in_stabilizer_group(operator, generators))
     
     def test_id_in_repetition(self):
         operator = stim.PauliString("__")
@@ -257,6 +259,54 @@ class TestRandomDescent(unittest.TestCase):
             print(stab)
         target_stabilizers = [stim.PauliString("ZZ__"), stim.PauliString("_ZZ_"), stim.PauliString("YXXX")]
         self.assertEqual(new_stabilizers, target_stabilizers)
+
+class TestGroupMembershipAgreesWithLegacy(unittest.TestCase):
+    """Cross-validate is_in_stabilizer_group against the O(2^k) legacy implementation
+    over a stress sample of (generator set, query operator) pairs. The two must agree
+    on every input — if they ever disagree, the fast path has a bug."""
+
+    @staticmethod
+    def _random_pauli(rng: random.Random, nq: int) -> stim.PauliString:
+        return stim.PauliString("".join(rng.choice("_XYZ") for _ in range(nq)))
+
+    def _assert_agreement_on_random_inputs(self, nq: int, n_gens: int, n_queries: int, seed_val: int):
+        rng = random.Random(seed_val)
+        generators = [self._random_pauli(rng, nq) for _ in range(n_gens)]
+        for _ in range(n_queries):
+            op = self._random_pauli(rng, nq)
+            legacy = _legacy_group_membership_check(op, generators)
+            fast = is_in_stabilizer_group(op, generators)
+            self.assertEqual(
+                legacy, fast,
+                msg=f"Disagreement on operator {op} with generators {generators}",
+            )
+
+    def test_random_3qubit(self):
+        self._assert_agreement_on_random_inputs(nq=3, n_gens=2, n_queries=80, seed_val=1)
+
+    def test_random_4qubit(self):
+        self._assert_agreement_on_random_inputs(nq=4, n_gens=3, n_queries=80, seed_val=2)
+
+    def test_random_5qubit(self):
+        self._assert_agreement_on_random_inputs(nq=5, n_gens=4, n_queries=80, seed_val=3)
+
+    def test_products_of_generators_are_members(self):
+        """Any product of generators is in the group by definition — both impls must agree on True."""
+        generators = [
+            stim.PauliString("XZZX_"),
+            stim.PauliString("_XZZX"),
+            stim.PauliString("ZX___"),
+            stim.PauliString("__XZZ"),
+        ]
+        nq = 5
+        for mask in range(1, 1 << len(generators)):
+            prod = stim.PauliString("_" * nq)
+            for i in range(len(generators)):
+                if mask & (1 << i):
+                    prod = prod * generators[i]
+            self.assertTrue(is_in_stabilizer_group(prod, generators))
+            self.assertTrue(_legacy_group_membership_check(prod, generators))
+
 
 if __name__ == "__main__":
     unittest.main()
