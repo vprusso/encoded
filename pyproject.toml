@@ -1,0 +1,60 @@
+[project]
+name = "encoded"
+version = "0.0.0"
+description = "Companion repository for encoded error mitigation experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Ryan LaRose", email = "rmlarose@msu.edu" },
+    { name = "Ben DalFavero" },
+]
+dependencies = [
+    "stim>=1.15",
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+# Heavy simulation / circuit deps — needed for the existing notebooks and the
+# Fermi-Hubbard VQE experiments. Not required for the random-walk / stabilizer
+# code work, which is why they're optional.
+cirq = [
+    "cirq-core",
+    "cirq_google",
+    "stimcirq",
+    "qsimcirq",
+]
+qiskit = [
+    "qiskit",
+    "qiskit-ibm-runtime",
+    "qiskit_aer",
+]
+perf = [
+    "numba",
+    "joblib",
+]
+# Convenience union matching the legacy requirements.txt — install with
+# `uv sync --extra full` to reproduce Ben's original environment.
+full = [
+    "cirq-core",
+    "cirq_google",
+    "stimcirq",
+    "qsimcirq",
+    "qiskit",
+    "qiskit-ibm-runtime",
+    "qiskit_aer",
+    "numba",
+    "joblib",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["encoded"]
