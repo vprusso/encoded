@@ -488,6 +488,116 @@ def random_walk_extend(
     )
 
 
+def beam_search_extend(
+    stabilizers: List[stim.PauliString],
+    errors: List[stim.PauliString],
+    extra_support: Optional[stim.PauliString] = None,
+    ancilla_budget: int = 0,
+    max_stabilizers: int = 4,
+    beam_width: int = 8,
+    n_expansions_per_slot: int = 4,
+    n_solution_samples: int = 8,
+    seed_val: int = 137,
+) -> WalkResult:
+    """Beam-search variant of `random_walk_extend`.
+
+    Maintains `beam_width` partial codes at each depth. At every step, each
+    beam slot is expanded by `n_expansions_per_slot` candidate next-stabilizers
+    (each chosen via the max-coverage scorer over the slot's currently
+    uncorrectable error pairs, with `n_solution_samples` candidate solutions
+    considered per expansion). The combined `beam_width * n_expansions_per_slot`
+    candidates are then pruned to the top `beam_width` by
+    `(uncorrectables_remaining, stabilizers_added)` lex order.
+
+    The key win vs. `random_walk_extend`: random walks make one stabilizer
+    commitment per step and can't backtrack — once a walk picks a bad first
+    stabilizer the whole walk is doomed. Beam search keeps multiple alternative
+    paths alive and prunes by quality across all of them simultaneously, so a
+    bad early commitment in one slot doesn't waste budget that another slot
+    could spend more productively.
+
+    Returns a WalkResult identical in shape to `random_walk_extend`'s. The
+    `n_walks` / `successful_walks` fields report the final beam state's totals;
+    `walks` is left empty (per-slot history could be added later)."""
+
+    if ancilla_budget > 0 and extra_support is not None:
+        raise ValueError(
+            "Specify either `ancilla_budget` (shared ancilla register, set once at the "
+            "start of each walk) or `extra_support` (one fresh ancilla per step), not both."
+        )
+
+    if ancilla_budget > 0:
+        pad = stim.PauliString("_" * ancilla_budget)
+        stabilizers = [g + pad for g in stabilizers]
+        errors = [e + pad for e in errors]
+
+    seed(seed_val)
+    initial_count = len(stabilizers)
+    initial_uncorr = get_uncorrectable_errors(stabilizers, errors)
+
+    # Each beam slot: (stabilizers_list, current_uncorrectables_list).
+    beam: List[Tuple[List[stim.PauliString], List[stim.PauliString]]] = [
+        (deepcopy(stabilizers), initial_uncorr),
+    ]
+    best_code = deepcopy(stabilizers)
+    best_key: Tuple[int, int] = (len(initial_uncorr), 0)
+
+    for _depth in range(max_stabilizers):
+        next_beam: List[Tuple[List[stim.PauliString], List[stim.PauliString]]] = []
+
+        for slot_stabs, slot_uncorr in beam:
+            if not slot_uncorr:
+                # Already-resolved slots stay in the beam unchanged so they can
+                # still win on the (remaining, added) tie-break.
+                next_beam.append((slot_stabs, slot_uncorr))
+                continue
+
+            for _ in range(n_expansions_per_slot):
+                err = slot_uncorr[randrange(0, len(slot_uncorr))]
+                if n_solution_samples > 1:
+                    selector = _build_max_coverage_selector(
+                        slot_uncorr, extra_support, n_solution_samples,
+                    )
+                    new_stabs = add_stabilizer(
+                        slot_stabs, [err], extra_support=extra_support,
+                        _solution_callback=selector,
+                    )
+                else:
+                    new_stabs = add_stabilizer(
+                        slot_stabs, [err], extra_support=extra_support,
+                        choose_solution_randomly=True,
+                    )
+                new_uncorr = get_uncorrectable_errors(new_stabs, errors)
+                next_beam.append((new_stabs, new_uncorr))
+
+        # Prune: keep top beam_width by (remaining, added) lex order.
+        next_beam.sort(key=lambda slot: (len(slot[1]), len(slot[0])))
+        beam = next_beam[:beam_width]
+
+        # Update global best across the new beam.
+        for slot_stabs, slot_uncorr in beam:
+            added = len(slot_stabs) - initial_count
+            key = (len(slot_uncorr), added)
+            if key < best_key:
+                best_key = key
+                best_code = deepcopy(slot_stabs)
+
+        # Early termination: if every slot in the beam is fully resolved, we're done.
+        if all(not u for _, u in beam):
+            break
+
+    successful_slots = sum(1 for _, u in beam if not u)
+    return WalkResult(
+        code=best_code,
+        succeeded=(best_key[0] == 0),
+        uncorrectables_remaining=best_key[0],
+        n_stabilizers_added=best_key[1],
+        n_walks=len(beam),
+        successful_walks=successful_slots,
+        walks=[],
+    )
+
+
 if __name__ == "__main__":
     stabilizers = [stim.PauliString("ZZ")]
     errors = [stim.PauliString("X_"), stim.PauliString("_X")]

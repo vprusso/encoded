@@ -17,7 +17,7 @@ from typing import List, Optional
 
 import stim
 
-from encoded.add_stabilizers import random_walk_extend
+from encoded.add_stabilizers import random_walk_extend, beam_search_extend
 
 
 PAULI_INDEX = {"X": 1, "Y": 2, "Z": 3}
@@ -53,9 +53,15 @@ class Scenario:
     errors: List[stim.PauliString]
     extra_support: Optional[stim.PauliString] = None
     ancilla_budget: int = 0
+    method: str = "random_walk"  # "random_walk" or "beam_search"
+    # random_walk params
     max_stabilizers_per_walk: int = 3
     max_walks: int = 20
     n_solution_samples: int = 1
+    # beam_search params
+    max_stabilizers: int = 4
+    beam_width: int = 8
+    n_expansions_per_slot: int = 4
     seed_val: int = 137
 
 
@@ -90,35 +96,49 @@ def _scenarios() -> List[Scenario]:
             max_stabilizers_per_walk=4, max_walks=30,
         ),
         Scenario(
-            name="FH [[8,6]] + weight-1 X (slide 14)",
+            name="FH [[8,6]] + weight-1 X (slide 14, beam)",
             initial_stabilizers=_fh_symmetries(8),
             errors=_all_single_qubit_paulis(8, "X"),
             ancilla_budget=2,
-            max_stabilizers_per_walk=3, max_walks=10,
-            n_solution_samples=16,
+            method="beam_search",
+            max_stabilizers=3, beam_width=8, n_expansions_per_slot=4,
+            n_solution_samples=8,
         ),
         Scenario(
-            name="FH [[16,14]] + weight-1 X (stress)",
+            name="FH [[16,14]] + weight-1 X (stress, beam)",
             initial_stabilizers=_fh_symmetries(16),
             errors=_all_single_qubit_paulis(16, "X"),
             ancilla_budget=4,
-            max_stabilizers_per_walk=4, max_walks=10,
-            n_solution_samples=16,
+            method="beam_search",
+            max_stabilizers=4, beam_width=8, n_expansions_per_slot=4,
+            n_solution_samples=8,
         ),
     ]
 
 
 def _run(sc: Scenario):
     t0 = time.perf_counter()
-    result = random_walk_extend(
-        sc.initial_stabilizers, sc.errors,
-        extra_support=sc.extra_support,
-        ancilla_budget=sc.ancilla_budget,
-        max_stabilizers_per_walk=sc.max_stabilizers_per_walk,
-        max_walks=sc.max_walks,
-        n_solution_samples=sc.n_solution_samples,
-        seed_val=sc.seed_val,
-    )
+    if sc.method == "beam_search":
+        result = beam_search_extend(
+            sc.initial_stabilizers, sc.errors,
+            extra_support=sc.extra_support,
+            ancilla_budget=sc.ancilla_budget,
+            max_stabilizers=sc.max_stabilizers,
+            beam_width=sc.beam_width,
+            n_expansions_per_slot=sc.n_expansions_per_slot,
+            n_solution_samples=sc.n_solution_samples if sc.n_solution_samples > 1 else 8,
+            seed_val=sc.seed_val,
+        )
+    else:
+        result = random_walk_extend(
+            sc.initial_stabilizers, sc.errors,
+            extra_support=sc.extra_support,
+            ancilla_budget=sc.ancilla_budget,
+            max_stabilizers_per_walk=sc.max_stabilizers_per_walk,
+            max_walks=sc.max_walks,
+            n_solution_samples=sc.n_solution_samples,
+            seed_val=sc.seed_val,
+        )
     elapsed = time.perf_counter() - t0
     n = max(len(g) for g in result.code) if result.code else 0
     k = n - len(result.code)

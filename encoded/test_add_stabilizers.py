@@ -6,6 +6,7 @@ from encoded.add_stabilizers import (
     _form_linear_system, add_stabilizer, is_in_stabilizer_group, knill_laflamme_cost_function,
     build_code_randomly, prune_duplicate_pauli_strings, random_depth_first_search,
     _legacy_group_membership_check, random_walk_extend, get_uncorrectable_errors,
+    beam_search_extend,
 )
 
 class TestLinearSystem(unittest.TestCase):
@@ -467,6 +468,51 @@ class TestRandomWalkExtend(unittest.TestCase):
         )
         self.assertFalse(result.succeeded)
         self.assertEqual(result.successful_walks, 0)
+        self.assertGreater(result.uncorrectables_remaining, 0)
+
+
+class TestBeamSearchExtend(unittest.TestCase):
+    """beam_search_extend should find slide-target extensions and at least match
+    random_walk_extend with similar budget."""
+
+    def test_finds_slide_14_optimum_for_fh_8_6(self):
+        g_up = stim.PauliString("Z_Z_Z_Z_")
+        g_down = stim.PauliString("_Z_Z_Z_Z")
+        stabilizers = [g_up, g_down]
+        errors = [stim.PauliString("_" * 8)]
+        for i in range(8):
+            mask = [0] * 8
+            mask[i] = 1
+            errors.append(stim.PauliString(mask))
+
+        result = beam_search_extend(
+            stabilizers, errors, ancilla_budget=2,
+            max_stabilizers=3, beam_width=8, n_expansions_per_slot=4,
+            n_solution_samples=8, seed_val=137,
+        )
+        self.assertTrue(result.succeeded)
+        # Slide 14 hand-design is [[10,6]] with 2 added stabilizers.
+        self.assertEqual(result.n_stabilizers_added, 2)
+        n = max(len(g) for g in result.code)
+        self.assertEqual(n, 10)
+        self.assertEqual(n - len(result.code), 6)
+
+    def test_returns_failure_signal_when_max_stabilizers_too_low(self):
+        """With max_stabilizers=1 the FH [[8,6]] target can't be reached — beam
+        must report succeeded=False."""
+        g_up = stim.PauliString("Z_Z_Z_Z_")
+        g_down = stim.PauliString("_Z_Z_Z_Z")
+        errors = [stim.PauliString("_" * 8)]
+        for i in range(8):
+            mask = [0] * 8
+            mask[i] = 1
+            errors.append(stim.PauliString(mask))
+        result = beam_search_extend(
+            [g_up, g_down], errors, ancilla_budget=2,
+            max_stabilizers=1, beam_width=4, n_expansions_per_slot=2,
+            seed_val=137,
+        )
+        self.assertFalse(result.succeeded)
         self.assertGreater(result.uncorrectables_remaining, 0)
 
 
