@@ -94,11 +94,13 @@ def _scenarios() -> List[Scenario]:
             extra_support=stim.PauliString("Z"),
             max_stabilizers_per_walk=3, max_walks=20,
         ),
-        # NOTE: FH [[16,14]] + weight-1 X currently OOMs inside enumerate_all_solutions
-        # because the linear system has ~32 - (existing_gens + 1) free variables, and
-        # enumerate_all_solutions materializes 2^free numpy arrays. Fix the enumerator
-        # to *sample* uniformly instead of enumerate (separate task) before adding it
-        # back as a stress case.
+        Scenario(
+            name="FH [[16,14]] + weight-1 X (stress)",
+            initial_stabilizers=_fh_symmetries(16),
+            errors=_all_single_qubit_paulis(16, "X"),
+            extra_support=stim.PauliString("Z"),
+            max_stabilizers_per_walk=8, max_walks=15,
+        ),
     ]
 
 

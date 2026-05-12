@@ -8,7 +8,7 @@ from copy import deepcopy
 import numpy as np
 import stim
 from encoded.decompose_operators import generators_to_matrix
-from encoded.binary_linalg import solve_boolean_system, _boolean_rref, enumerate_all_solutions, system_has_solutions
+from encoded.binary_linalg import solve_boolean_system, _boolean_rref, enumerate_all_solutions, system_has_solutions, sample_random_solution
 
 def metric_tensor(nq: int) -> np.ndarray:
     id_nq = np.eye(nq).astype(bool)
@@ -75,16 +75,24 @@ def add_stabilizer(
     if verbose:
         print("A_rref=\n", A_rref)
         print("b_rref=\n", b_rref)
-    solutions = enumerate_all_solutions(A_rref, b_rref)
-    candidate_strings = []
-    for x in solutions:
-        xs = x[:x.size // 2]
-        zs = x[(x.size // 2):]
-        pstring = stim.PauliString.from_numpy(xs=xs, zs=zs)
-        candidate_strings.append(pstring)
     if choose_solution_randomly:
-        new_generator = candidate_strings[randrange(0, len(candidate_strings))]
+        # Sample one solution from the affine subspace without materializing
+        # 2^free_vars candidates. Bit-identical to the old enumerate+randrange
+        # pattern under the same seed.
+        x = sample_random_solution(A_rref, b_rref)
+        new_generator = stim.PauliString.from_numpy(
+            xs=x[:x.size // 2], zs=x[x.size // 2:],
+        )
     else:
+        # Lowest-weight selection still needs all candidates (finding the
+        # min-weight solution to a boolean system is NP-hard — slide 17).
+        solutions = enumerate_all_solutions(A_rref, b_rref)
+        candidate_strings = []
+        for x in solutions:
+            xs = x[:x.size // 2]
+            zs = x[(x.size // 2):]
+            pstring = stim.PauliString.from_numpy(xs=xs, zs=zs)
+            candidate_strings.append(pstring)
         new_generator = min(candidate_strings, key=lambda ps: ps.weight)
     if extra_support is not None:
         new_generator += extra_support

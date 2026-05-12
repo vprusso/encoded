@@ -308,6 +308,57 @@ class TestGroupMembershipAgreesWithLegacy(unittest.TestCase):
             self.assertTrue(_legacy_group_membership_check(prod, generators))
 
 
+class TestSampleRandomSolution(unittest.TestCase):
+    """sample_random_solution should always return a valid solution to the system,
+    and over many draws should cover the affine subspace."""
+
+    def test_returns_valid_solution(self):
+        from encoded.binary_linalg import _boolean_rref, sample_random_solution
+        # A non-trivial 3x4 system that has multiple solutions.
+        A = np.array([
+            [True,  True,  False, False],
+            [False, True,  True,  False],
+            [True,  False, False, True],
+        ])
+        b = np.array([True, False, True])
+        A_rref, b_rref = _boolean_rref(A, b)
+
+        random.seed(0)
+        for _ in range(20):
+            x = sample_random_solution(A_rref, b_rref)
+            # Check x is a solution: A @ x = b (mod 2)
+            product = np.zeros(A.shape[0], dtype=bool)
+            for j in range(A.shape[1]):
+                if x[j]:
+                    product ^= A[:, j]
+            self.assertTrue(np.array_equal(product, b))
+
+    def test_covers_solution_space(self):
+        """Across many samples, sample_random_solution should hit every solution
+        in the affine subspace at least once."""
+        from encoded.binary_linalg import _boolean_rref, enumerate_all_solutions, sample_random_solution
+        # Pick a system with a small known solution space so we can enumerate.
+        A = np.array([
+            [True,  False, True, False],
+            [False, True,  True, True],
+        ])
+        b = np.array([True, False])
+        A_rref, b_rref = _boolean_rref(A, b)
+        all_sols = enumerate_all_solutions(A_rref, b_rref)
+        all_sols_as_tuples = {tuple(s.tolist()) for s in all_sols}
+
+        random.seed(42)
+        seen = set()
+        for _ in range(200):
+            x = sample_random_solution(A_rref, b_rref)
+            seen.add(tuple(x.tolist()))
+
+        # Every drawn solution should be in the enumerated set.
+        self.assertTrue(seen.issubset(all_sols_as_tuples))
+        # 200 draws over (typically) 4 solutions: should hit them all.
+        self.assertEqual(seen, all_sols_as_tuples)
+
+
 class TestRandomWalkExtend(unittest.TestCase):
     """random_walk_extend: structured WalkResult + tie-breaking + telemetry."""
 

@@ -1,6 +1,7 @@
 from typing import List, Dict, Tuple
 import itertools as it
 from copy import deepcopy
+from random import randrange
 import numpy as np
 
 def _swap_row(arr: np.ndarray, i: int, j: int):
@@ -226,6 +227,40 @@ def enumerate_all_solutions(A: np.ndarray, b: np.ndarray) -> List[np.ndarray]:
             x = solve_with_known_values(A, b, known_values)
             solutions.append(x)
     return solutions
+
+
+def sample_random_solution(A_rref: np.ndarray, b_rref: np.ndarray) -> np.ndarray:
+    """Sample one solution uniformly from the affine subspace of solutions to
+    A_rref @ x = b_rref over GF(2). A_rref must be in RREF; behavior is undefined
+    if the system is inconsistent (caller should check `system_has_solutions`).
+
+    O(n^2) — never materializes 2^(free vars) candidates the way
+    `enumerate_all_solutions` does, so it scales to ~30+ free variables.
+
+    Consumes exactly one `random.randrange(0, 2^n_free)` draw, matching the
+    `randrange(0, len(enumerate_all_solutions(...)))` pattern callers used
+    previously — so existing seeded tests get bit-identical results."""
+
+    pivots = _pivot_locations(A_rref)
+    pivot_columns = {t[1] for t in pivots}
+    free_columns = sorted(j for j in range(A_rref.shape[1]) if j not in pivot_columns)
+    n_free = len(free_columns)
+
+    # Match enumerate_all_solutions's behavior: when there are no free variables
+    # it still appends one solution, so callers' randrange(0, 1) consumed one draw.
+    n_solutions = 1 << n_free if n_free > 0 else 1
+    k = randrange(0, n_solutions)
+
+    if n_free == 0:
+        return solve_with_known_values(A_rref, b_rref, {})
+
+    # itertools.product([False, True], repeat=n_free) walks tuples in lex order,
+    # so the i-th element of the k-th tuple is bit (n_free - 1 - i) of k.
+    known = {
+        free_columns[i]: bool((k >> (n_free - 1 - i)) & 1)
+        for i in range(n_free)
+    }
+    return solve_with_known_values(A_rref, b_rref, known)
 
 
 def system_has_solutions(A_rref: np.ndarray, b_rref: np.ndarray) -> bool:
