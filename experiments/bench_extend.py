@@ -1,6 +1,6 @@
 """FH-realistic benchmark harness for random_walk_extend (slide 33).
 
-Each scenario: take an initial stabilizer group + target errors + ancilla
+Each scenario: take an initial stabilizer group + target errors + extra-qubit
 template, run the random walk extender, and report:
   - whether the extension succeeded (all targets correctable)
   - resulting (n, k, # stabilizers added, # uncorrectables remaining)
@@ -10,11 +10,9 @@ template, run the random walk extender, and report:
 Run with: uv run python experiments/bench_extend.py
 """
 
-from __future__ import annotations
 import itertools
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 import stim
 
@@ -24,7 +22,7 @@ from encoded.add_stabilizers import random_walk_extend, beam_search_extend
 PAULI_INDEX = {"X": 1, "Y": 2, "Z": 3}
 
 
-def _all_single_qubit_paulis(n: int, paulis: str = "XYZ") -> List[stim.PauliString]:
+def _all_single_qubit_paulis(n: int, paulis: str = "XYZ") -> list[stim.PauliString]:
     """Identity + all single-qubit P errors for P in `paulis` over n qubits."""
     out = [stim.PauliString("_" * n)]
     for i in range(n):
@@ -36,12 +34,12 @@ def _all_single_qubit_paulis(n: int, paulis: str = "XYZ") -> List[stim.PauliStri
 
 
 def _all_paulis_up_to_weight(
-    n: int, weights: Tuple[int, ...], paulis: str = "XYZ",
-) -> List[stim.PauliString]:
+    n: int, weights: tuple[int, ...], paulis: str = "XYZ",
+) -> list[stim.PauliString]:
     """Identity + all Paulis on n qubits whose weight is in `weights`. Spans
     every qubit position (not just a subset). Use with stabilizers padded to
     length n so the algorithm sees a true distance constraint over the full
-    code space (data + ancilla)."""
+    code space (data + extra qubit)."""
     out = [stim.PauliString("_" * n)]
     pauli_codes = [PAULI_INDEX[c] for c in paulis]
     for w in sorted(weights):
@@ -57,15 +55,15 @@ def _all_paulis_up_to_weight(
 
 
 def make_extension_inputs(
-    initial_stabilizers: List[stim.PauliString],
+    initial_stabilizers: list[stim.PauliString],
     total_n_qubits: int,
-    error_weights: Tuple[int, ...] = (1,),
+    error_weights: tuple[int, ...] = (1,),
     paulis: str = "XYZ",
-) -> Tuple[List[stim.PauliString], List[stim.PauliString]]:
+) -> tuple[list[stim.PauliString], list[stim.PauliString]]:
     """Pre-pad `initial_stabilizers` to length `total_n_qubits` and construct
     an error set covering all Paulis of weight in `error_weights` over the full
     qubit register. The returned (stabilizers, errors) should be passed to
-    random_walk_extend / beam_search_extend with `ancilla_budget=0` (the
+    random_walk_extend / beam_search_extend with `extra_qubits=0` (the
     padding is already done here).
 
     For a code with target distance d, pass `error_weights=tuple(range(1, (d-1)//2 + 1))`
@@ -87,7 +85,7 @@ def make_extension_inputs(
     return padded, errors
 
 
-def _fh_symmetries(n: int) -> List[stim.PauliString]:
+def _fh_symmetries(n: int) -> list[stim.PauliString]:
     """Particle-number-conservation generators for n-site Fermi-Hubbard with the
     staggered spin mapping (even qubits = spin up, odd = spin down) used in
     Ben's slide deck:
@@ -102,10 +100,10 @@ def _fh_symmetries(n: int) -> List[stim.PauliString]:
 @dataclass
 class Scenario:
     name: str
-    initial_stabilizers: List[stim.PauliString]
-    errors: List[stim.PauliString]
-    extra_support: Optional[stim.PauliString] = None
-    ancilla_budget: int = 0
+    initial_stabilizers: list[stim.PauliString]
+    errors: list[stim.PauliString]
+    extra_support: stim.PauliString | None = None
+    extra_qubits: int = 0
     method: str = "random_walk"  # "random_walk" or "beam_search"
     # random_walk params
     max_stabilizers_per_walk: int = 3
@@ -118,7 +116,7 @@ class Scenario:
     seed_val: int = 137
 
 
-def _scenarios() -> List[Scenario]:
+def _scenarios() -> list[Scenario]:
     return [
         Scenario(
             name="rep ZZ + {X1, X2}",
@@ -138,21 +136,21 @@ def _scenarios() -> List[Scenario]:
             name="FH [[4,2]] + weight-1 X (slide 13)",
             initial_stabilizers=_fh_symmetries(4),
             errors=_all_single_qubit_paulis(4, "X"),
-            ancilla_budget=1,
+            extra_qubits=1,
             max_stabilizers_per_walk=2, max_walks=20,
         ),
         Scenario(
             name="FH [[4,2]] + all weight-1 (slide 34)",
             initial_stabilizers=_fh_symmetries(4),
             errors=_all_single_qubit_paulis(4),
-            ancilla_budget=3,
+            extra_qubits=3,
             max_stabilizers_per_walk=4, max_walks=30,
         ),
         Scenario(
             name="FH [[8,6]] + weight-1 X (slide 14, beam)",
             initial_stabilizers=_fh_symmetries(8),
             errors=_all_single_qubit_paulis(8, "X"),
-            ancilla_budget=2,
+            extra_qubits=2,
             method="beam_search",
             max_stabilizers=3, beam_width=8, n_expansions_per_slot=4,
             n_solution_samples=8,
@@ -161,52 +159,52 @@ def _scenarios() -> List[Scenario]:
             name="FH [[16,14]] + weight-1 X (stress, beam)",
             initial_stabilizers=_fh_symmetries(16),
             errors=_all_single_qubit_paulis(16, "X"),
-            ancilla_budget=4,
+            extra_qubits=4,
             method="beam_search",
             max_stabilizers=4, beam_width=8, n_expansions_per_slot=4,
             n_solution_samples=8,
         ),
         # ---- d=3 target scenarios: errors on ALL qubits, no internal padding ----
         # These force the code's actual distance >= 3 by including weight-1 Paulis
-        # on every qubit (data + ancilla) in the input error set.
+        # on every qubit (data + extra qubit) in the input error set.
     ] + _d3_target_scenarios()
 
 
-def _d3_target_scenarios() -> List["Scenario"]:
+def _d3_target_scenarios() -> list["Scenario"]:
     """d=3 target scenarios: weight-1 Paulis (X/Y/Z) on all qubits, stabilizers
-    pre-padded so ancilla_budget=0 is correct. Ancilla count is chosen large
+    pre-padded so extra_qubits=0 is correct. Ancilla count is chosen large
     enough that the algorithm can find a valid extension; can be tuned smaller
     once we know what's necessary."""
-    scenarios: List[Scenario] = []
+    scenarios: list[Scenario] = []
 
-    # FH [[4,2]] -> aim for d=3 with 2 ancillae (6 total qubits).
+    # FH [[4,2]] -> aim for d=3 with 2 extra qubits (6 total qubits).
     stabs, errs = make_extension_inputs(_fh_symmetries(4), total_n_qubits=6, error_weights=(1,))
     scenarios.append(Scenario(
         name="FH [[4,2]] -> d=3 (6 qubits, beam)",
         initial_stabilizers=stabs, errors=errs,
-        ancilla_budget=0,
+        extra_qubits=0,
         method="beam_search",
         max_stabilizers=6, beam_width=8, n_expansions_per_slot=4,
         n_solution_samples=8,
     ))
 
-    # FH [[8,6]] -> aim for d=3 with 4 ancillae (12 total qubits).
+    # FH [[8,6]] -> aim for d=3 with 4 extra qubits (12 total qubits).
     stabs, errs = make_extension_inputs(_fh_symmetries(8), total_n_qubits=12, error_weights=(1,))
     scenarios.append(Scenario(
         name="FH [[8,6]] -> d=3 (12 qubits, beam)",
         initial_stabilizers=stabs, errors=errs,
-        ancilla_budget=0,
+        extra_qubits=0,
         method="beam_search",
         max_stabilizers=8, beam_width=8, n_expansions_per_slot=4,
         n_solution_samples=8,
     ))
 
-    # FH [[16,14]] -> aim for d=3 with 6 ancillae (22 total qubits).
+    # FH [[16,14]] -> aim for d=3 with 6 extra qubits (22 total qubits).
     stabs, errs = make_extension_inputs(_fh_symmetries(16), total_n_qubits=22, error_weights=(1,))
     scenarios.append(Scenario(
         name="FH [[16,14]] -> d=3 (22 qubits, beam)",
         initial_stabilizers=stabs, errors=errs,
-        ancilla_budget=0,
+        extra_qubits=0,
         method="beam_search",
         max_stabilizers=10, beam_width=8, n_expansions_per_slot=4,
         n_solution_samples=8,
@@ -221,7 +219,7 @@ def _run(sc: Scenario):
         result = beam_search_extend(
             sc.initial_stabilizers, sc.errors,
             extra_support=sc.extra_support,
-            ancilla_budget=sc.ancilla_budget,
+            extra_qubits=sc.extra_qubits,
             max_stabilizers=sc.max_stabilizers,
             beam_width=sc.beam_width,
             n_expansions_per_slot=sc.n_expansions_per_slot,
@@ -232,7 +230,7 @@ def _run(sc: Scenario):
         result = random_walk_extend(
             sc.initial_stabilizers, sc.errors,
             extra_support=sc.extra_support,
-            ancilla_budget=sc.ancilla_budget,
+            extra_qubits=sc.extra_qubits,
             max_stabilizers_per_walk=sc.max_stabilizers_per_walk,
             max_walks=sc.max_walks,
             n_solution_samples=sc.n_solution_samples,

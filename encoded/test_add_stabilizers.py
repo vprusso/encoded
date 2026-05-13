@@ -393,13 +393,13 @@ class TestRandomWalkExtend(unittest.TestCase):
         if result.successful_walks > 0:
             self.assertTrue(result.succeeded)
 
-    def test_ancilla_budget_equivalent_to_extra_support_on_single_step(self):
-        """For a single-step walk, ancilla_budget=1 should be equivalent in shape to
+    def test_extra_qubits_equivalent_to_extra_support_on_single_step(self):
+        """For a single-step walk, extra_qubits=1 should be equivalent in shape to
         extra_support=single-qubit (both produce a 3-qubit result for ZZ + {X1,X2})."""
         stabilizers = [stim.PauliString("ZZ")]
         errors = [stim.PauliString("X_"), stim.PauliString("_X")]
         result = random_walk_extend(
-            stabilizers, errors, ancilla_budget=1,
+            stabilizers, errors, extra_qubits=1,
             max_stabilizers_per_walk=1, max_walks=10, seed_val=12,
         )
         self.assertTrue(result.succeeded)
@@ -422,7 +422,7 @@ class TestRandomWalkExtend(unittest.TestCase):
             errors.append(stim.PauliString(mask))
 
         common_kwargs = dict(
-            stabilizers=stabilizers, errors=errors, ancilla_budget=2,
+            stabilizers=stabilizers, errors=errors, extra_qubits=2,
             max_stabilizers_per_walk=3, max_walks=20, seed_val=137,
         )
         random_result = random_walk_extend(**common_kwargs, n_solution_samples=1)
@@ -434,12 +434,12 @@ class TestRandomWalkExtend(unittest.TestCase):
         self.assertTrue(smart_result.succeeded)
         self.assertEqual(smart_result.n_stabilizers_added, 2)
 
-    def test_ancilla_budget_and_extra_support_are_mutually_exclusive(self):
+    def test_extra_qubits_and_extra_support_are_mutually_exclusive(self):
         with self.assertRaises(ValueError):
             random_walk_extend(
                 [stim.PauliString("ZZ")], [stim.PauliString("X_")],
                 extra_support=stim.PauliString("Z"),
-                ancilla_budget=1,
+                extra_qubits=1,
             )
 
     def test_failure_signal_when_budget_too_small(self):
@@ -531,7 +531,7 @@ class TestBeamSearchExtend(unittest.TestCase):
             errors.append(stim.PauliString(mask))
 
         result = beam_search_extend(
-            stabilizers, errors, ancilla_budget=2,
+            stabilizers, errors, extra_qubits=2,
             max_stabilizers=3, beam_width=8, n_expansions_per_slot=4,
             n_solution_samples=8, seed_val=137,
         )
@@ -553,7 +553,7 @@ class TestBeamSearchExtend(unittest.TestCase):
             mask[i] = 1
             errors.append(stim.PauliString(mask))
         result = beam_search_extend(
-            [g_up, g_down], errors, ancilla_budget=2,
+            [g_up, g_down], errors, extra_qubits=2,
             max_stabilizers=1, beam_width=4, n_expansions_per_slot=2,
             seed_val=137,
         )

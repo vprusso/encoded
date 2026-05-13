@@ -4,10 +4,8 @@
 Scenarios are sized to match realistic call sites of get_uncorrectable_errors during a
 build_code_randomly run on (a) the rep code, (b) the [[5,2]] Fermi-Hubbard code, (c) Shor."""
 
-from __future__ import annotations
 import time
 from dataclasses import dataclass
-from typing import List
 
 import stim
 
@@ -17,11 +15,11 @@ from encoded.add_stabilizers import is_in_stabilizer_group, _legacy_group_member
 @dataclass
 class Scenario:
     name: str
-    generators: List[stim.PauliString]
-    queries: List[stim.PauliString]
+    generators: list[stim.PauliString]
+    queries: list[stim.PauliString]
 
 
-def _all_single_qubit_paulis(n: int) -> List[stim.PauliString]:
+def _all_single_qubit_paulis(n: int) -> list[stim.PauliString]:
     out = [stim.PauliString("_" * n)]
     for i in range(n):
         for p in (1, 2, 3):
@@ -31,7 +29,7 @@ def _all_single_qubit_paulis(n: int) -> List[stim.PauliString]:
     return out
 
 
-def _scenarios() -> List[Scenario]:
+def _scenarios() -> list[Scenario]:
     # Shor-shaped: 8 ZZ-pair generators on 9 qubits, query against products of single-Pauli errors.
     shor_gens = [
         stim.PauliString("ZZ_______"),

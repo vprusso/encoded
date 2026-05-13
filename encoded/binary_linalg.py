@@ -1,4 +1,3 @@
-from typing import List, Dict, Tuple
 import itertools as it
 from copy import deepcopy
 from random import randrange
@@ -117,7 +116,7 @@ def _boolean_backsub_solve(A_rref: np.ndarray, b_rref: np.ndarray) -> np.ndarray
     return x
 
 
-def _pivot_columns(A: np.ndarray) -> List[int]:
+def _pivot_columns(A: np.ndarray) -> list[int]:
     """Find the pivot columns of the binary matrix A in RREF."""
 
     i = 0 # Index of row where the pivot is.
@@ -133,7 +132,7 @@ def _pivot_columns(A: np.ndarray) -> List[int]:
     return pivot_columns
 
 
-def _pivot_locations(A: np.ndarray) -> List[Tuple[int, int]]:
+def _pivot_locations(A: np.ndarray) -> list[tuple[int, int]]:
     """Find the pivot columns of the binary matrix A in RREF."""
 
     i = 0 # Index of row where the pivot is.
@@ -159,7 +158,7 @@ def solve_boolean_system(A, b, verbose: bool=False):
 
 
 # TODO This should be a generator.
-def _enumerate_bitstrings(n: int) -> List[np.ndarray]:
+def _enumerate_bitstrings(n: int) -> list[np.ndarray]:
     """Enumerate all bitstrings with n bits in the form of numpy arrays"""
 
     binary_lists = it.product([False, True], repeat=n)
@@ -169,7 +168,7 @@ def _enumerate_bitstrings(n: int) -> List[np.ndarray]:
     return bstrings
 
 
-def _single_row_backsub(row: np.ndarray, i: int, known_values: Dict[int, bool], rhs: bool) -> bool:
+def _single_row_backsub(row: np.ndarray, i: int, known_values: dict[int, bool], rhs: bool) -> bool:
     """Solve for the value in column i for this row during backsubstitution.
     The values we have already solved for are encoded in known_values.
     
@@ -190,7 +189,7 @@ def _single_row_backsub(row: np.ndarray, i: int, known_values: Dict[int, bool], 
     return rhs ^ known_true_sum
 
 
-def solve_with_known_values(A: np.ndarray, b: np.ndarray, known_values: Dict[int, bool]) -> np.ndarray:
+def solve_with_known_values(A: np.ndarray, b: np.ndarray, known_values: dict[int, bool]) -> np.ndarray:
     """Given A and b in RREF and values for the free variables, solve the solution vector x."""
 
     # Check that all of the free variables are known.
@@ -209,7 +208,7 @@ def solve_with_known_values(A: np.ndarray, b: np.ndarray, known_values: Dict[int
     return np.array([known_copy[i] for i in range(A.shape[1])])
 
 
-def enumerate_all_solutions(A: np.ndarray, b: np.ndarray) -> List[np.ndarray]:
+def enumerate_all_solutions(A: np.ndarray, b: np.ndarray) -> list[np.ndarray]:
     """Enumerate all solutions to a system of binary equations. A must be in
     reduced row echelon form."""
 
