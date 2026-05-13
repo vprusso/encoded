@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import stim
 
 from encoded.add_stabilizers import random_walk_extend, beam_search_extend
+from encoded import connectivity as connect
 
 
 PAULI_INDEX = {"X": 1, "Y": 2, "Z": 3}
@@ -118,6 +119,9 @@ class Scenario:
     # set this to 2t so a >=2t+1 lower bound is reported when the search finds no
     # logical of weight <= 2t)
     distance_max_weight: int = 3
+    # hardware connectivity (dict[int, set[int]]) — added stabilizers must have
+    # support that's a connected subgraph in this graph. None = all-to-all.
+    connectivity: dict | None = None
 
 
 def _scenarios() -> list[Scenario]:
@@ -214,7 +218,33 @@ def _d3_target_scenarios() -> list["Scenario"]:
         n_solution_samples=8,
     ))
 
-    return scenarios + _d5_target_scenarios()
+    return scenarios + _d5_target_scenarios() + _connectivity_scenarios()
+
+
+def _connectivity_scenarios() -> list[Scenario]:
+    """Hardware-tailored scenarios: identical to the d=3 targets above but with
+    linear nearest-neighbor connectivity, so added stabilizers must have support
+    that's a connected subgraph in the 1D line. Note: the initial FH symmetry
+    generators (ZIZI...) have non-NN-connected support and so already violate
+    the constraint -- the added stabilizers are constrained, but the starting
+    Hamiltonian-derived ones aren't (they're a property of the problem, not the
+    algorithm's choice). Real-device deployment of the resulting code would
+    still need SWAPs to measure the FH symmetry stabilizers."""
+    scenarios: list[Scenario] = []
+
+    # FH [[4,2]] -> d=3 under linear NN on 6 qubits.
+    stabs, errs = make_extension_inputs(_fh_symmetries(4), total_n_qubits=6, error_weights=(1,))
+    scenarios.append(Scenario(
+        name="FH [[4,2]] -> d=3, linear NN (6 qubits)",
+        initial_stabilizers=stabs, errors=errs,
+        extra_qubits=0,
+        method="beam_search",
+        max_stabilizers=6, beam_width=8, n_expansions_per_slot=4,
+        n_solution_samples=8,
+        connectivity=connect.linear(6),
+    ))
+
+    return scenarios
 
 
 def _d5_target_scenarios() -> list["Scenario"]:
@@ -287,6 +317,7 @@ def _run(sc: Scenario):
             n_solution_samples=sc.n_solution_samples if sc.n_solution_samples > 1 else 8,
             seed_val=sc.seed_val,
             distance_max_weight=sc.distance_max_weight,
+            connectivity=sc.connectivity,
         )
     else:
         result = random_walk_extend(
@@ -298,6 +329,7 @@ def _run(sc: Scenario):
             n_solution_samples=sc.n_solution_samples,
             seed_val=sc.seed_val,
             distance_max_weight=sc.distance_max_weight,
+            connectivity=sc.connectivity,
         )
     elapsed = time.perf_counter() - t0
     n = max(len(g) for g in result.code) if result.code else 0

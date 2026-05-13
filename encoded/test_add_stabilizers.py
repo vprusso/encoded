@@ -9,6 +9,7 @@ from encoded.add_stabilizers import (
     _legacy_get_uncorrectable_errors,
     beam_search_extend, compute_distance,
 )
+from encoded import connectivity as connect
 
 class TestLinearSystem(unittest.TestCase):
 
@@ -617,6 +618,61 @@ class TestBeamSearchExtend(unittest.TestCase):
         )
         self.assertFalse(result.succeeded)
         self.assertGreater(result.uncorrectables_remaining, 0)
+
+
+class TestConnectivityConstraint(unittest.TestCase):
+    """When `connectivity` is given to random_walk_extend / beam_search_extend,
+    every added stabilizer must have support that's a connected subgraph in the
+    connectivity graph."""
+
+    @staticmethod
+    def _all_added_are_connected(initial_stabs, result_code, graph):
+        for stab in result_code[len(initial_stabs):]:
+            if not connect.has_connected_support(stab, graph):
+                return False, stab
+        return True, None
+
+    def test_linear_nn_on_rep_extension(self):
+        """Tiny case: rep ZZ + {X1, X2} with linear NN on 3 qubits. The added
+        stabilizer should respect the linear graph."""
+        stabilizers = [stim.PauliString("ZZ_")]
+        errors = [stim.PauliString("___"), stim.PauliString("X__"), stim.PauliString("_X_")]
+        graph = connect.linear(3)
+        result = random_walk_extend(
+            stabilizers, errors,
+            max_stabilizers_per_walk=1, max_walks=10, seed_val=12,
+            connectivity=graph,
+        )
+        # Every added stabilizer must respect linear NN.
+        ok, bad = self._all_added_are_connected(stabilizers, result.code, graph)
+        self.assertTrue(ok, msg=f"Stabilizer {bad} violates linear NN.")
+
+    def test_beam_search_respects_connectivity(self):
+        """Same property under beam_search_extend."""
+        stabilizers = [stim.PauliString("ZZ_")]
+        errors = [stim.PauliString("___"), stim.PauliString("X__"), stim.PauliString("_X_")]
+        graph = connect.linear(3)
+        result = beam_search_extend(
+            stabilizers, errors,
+            max_stabilizers=2, beam_width=4, n_expansions_per_slot=2,
+            n_solution_samples=8, seed_val=12,
+            connectivity=graph,
+        )
+        ok, bad = self._all_added_are_connected(stabilizers, result.code, graph)
+        self.assertTrue(ok, msg=f"Stabilizer {bad} violates linear NN.")
+
+    def test_has_connected_support_basic_cases(self):
+        line = connect.linear(4)  # 0-1-2-3
+        # XXII has support {0,1}, connected
+        self.assertTrue(connect.has_connected_support(stim.PauliString("XX__"), line))
+        # X_X_ has support {0,2}, not directly connected in linear
+        self.assertFalse(connect.has_connected_support(stim.PauliString("X_X_"), line))
+        # XXX_ has support {0,1,2}, connected
+        self.assertTrue(connect.has_connected_support(stim.PauliString("XXX_"), line))
+        # Identity is trivially connected
+        self.assertTrue(connect.has_connected_support(stim.PauliString("____"), line))
+        # Weight-1 is trivially connected
+        self.assertTrue(connect.has_connected_support(stim.PauliString("__X_"), line))
 
 
 if __name__ == "__main__":

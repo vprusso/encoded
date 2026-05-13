@@ -10,6 +10,13 @@ import numpy as np
 import stim
 from encoded.decompose_operators import generators_to_matrix
 from encoded.binary_linalg import solve_boolean_system, _boolean_rref, enumerate_all_solutions, system_has_solutions, sample_random_solution
+from encoded.connectivity import has_connected_support
+
+
+class NoConnectivityValidSample(Exception):
+    """Raised by the max-coverage selector when no candidate solution within the
+    sample budget satisfies the connectivity constraint. Caught by the walk loops
+    to skip that expansion."""
 
 def metric_tensor(nq: int) -> np.ndarray:
     id_nq = np.eye(nq).astype(bool)
@@ -481,12 +488,18 @@ def _build_max_coverage_selector(
     uncorrectables: list[stim.PauliString],
     extra_support: stim.PauliString | None,
     n_samples: int,
+    connectivity: dict[int, set[int]] | None = None,
 ):
     """Build a solution-selection callback for add_stabilizer that, given the
     affine solution space (A_rref, b_rref), samples `n_samples` candidate
     solutions and returns the one that anticommutes with the most
     `uncorrectables`. Score includes any `extra_support` qubits appended after
-    the linear system is solved."""
+    the linear system is solved.
+
+    When `connectivity` is given, samples whose non-identity support violates the
+    connectivity graph are rejected before scoring. If no connectivity-valid
+    sample is found within `n_samples` tries, raises NoConnectivityValidSample
+    so the caller can skip this expansion."""
 
     def selector(A_rref: np.ndarray, b_rref: np.ndarray) -> np.ndarray:
         best_x = None
@@ -497,10 +510,16 @@ def _build_max_coverage_selector(
                 xs=x[:x.size // 2], zs=x[x.size // 2:],
             )
             full = candidate + extra_support if extra_support is not None else candidate
+            if connectivity is not None and not has_connected_support(full, connectivity):
+                continue
             score = sum(1 for e in uncorrectables if not full.commutes(e))
             if score > best_score:
                 best_score = score
                 best_x = x
+        if best_x is None:
+            raise NoConnectivityValidSample(
+                f"No connectivity-valid sample found in {n_samples} draws."
+            )
         return best_x
 
     return selector
@@ -517,6 +536,7 @@ def random_walk_extend(
     seed_val: int = 137,
     distance_max_weight: int = 3,
     verbose: bool = False,
+    connectivity: dict[int, set[int]] | None = None,
 ) -> WalkResult:
     """Slide-33 random walk: at each step pick a random uncorrectable error product
     and a random solution from the resulting affine system, add it to the group,
@@ -578,6 +598,11 @@ def random_walk_extend(
     best_key: tuple[int, int] = (initial_uncorrectables, 0)  # (remaining, added)
     walks: list[PerWalkResult] = []
 
+    # If connectivity is set, always go through the max-coverage selector so we
+    # can filter by connectivity; bump the sample budget to give the filter room
+    # to find a valid candidate.
+    effective_samples = max(n_solution_samples, 16) if connectivity is not None else n_solution_samples
+
     t_start = time.perf_counter()
     for walk_idx in range(max_walks):
         temp = deepcopy(stabilizers)
@@ -586,13 +611,18 @@ def random_walk_extend(
             if not uncorrectables:
                 break
             new_err = uncorrectables[randrange(0, len(uncorrectables))]
-            if n_solution_samples > 1:
+            if effective_samples > 1 or connectivity is not None:
                 selector = _build_max_coverage_selector(
-                    uncorrectables, extra_support, n_solution_samples,
+                    uncorrectables, extra_support, effective_samples,
+                    connectivity=connectivity,
                 )
-                temp = add_stabilizer(
-                    temp, [new_err], extra_support=extra_support, _solution_callback=selector,
-                )
+                try:
+                    temp = add_stabilizer(
+                        temp, [new_err], extra_support=extra_support, _solution_callback=selector,
+                    )
+                except NoConnectivityValidSample:
+                    # No connectivity-respecting solution found; this walk stops here.
+                    break
             else:
                 temp = add_stabilizer(
                     temp, [new_err], extra_support=extra_support, choose_solution_randomly=True,
@@ -647,6 +677,7 @@ def beam_search_extend(
     seed_val: int = 137,
     distance_max_weight: int = 3,
     verbose: bool = False,
+    connectivity: dict[int, set[int]] | None = None,
 ) -> WalkResult:
     """Beam-search variant of `random_walk_extend`.
 
@@ -708,16 +739,24 @@ def beam_search_extend(
                 next_beam.append((slot_stabs, slot_uncorr))
                 continue
 
+            effective_samples = (
+                max(n_solution_samples, 16) if connectivity is not None else n_solution_samples
+            )
             for _ in range(n_expansions_per_slot):
                 err = slot_uncorr[randrange(0, len(slot_uncorr))]
-                if n_solution_samples > 1:
+                if effective_samples > 1 or connectivity is not None:
                     selector = _build_max_coverage_selector(
-                        slot_uncorr, extra_support, n_solution_samples,
+                        slot_uncorr, extra_support, effective_samples,
+                        connectivity=connectivity,
                     )
-                    new_stabs = add_stabilizer(
-                        slot_stabs, [err], extra_support=extra_support,
-                        _solution_callback=selector,
-                    )
+                    try:
+                        new_stabs = add_stabilizer(
+                            slot_stabs, [err], extra_support=extra_support,
+                            _solution_callback=selector,
+                        )
+                    except NoConnectivityValidSample:
+                        # No connectivity-valid extension for this expansion; skip.
+                        continue
                 else:
                     new_stabs = add_stabilizer(
                         slot_stabs, [err], extra_support=extra_support,
