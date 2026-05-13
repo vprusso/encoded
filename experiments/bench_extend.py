@@ -114,6 +114,10 @@ class Scenario:
     beam_width: int = 8
     n_expansions_per_slot: int = 4
     seed_val: int = 137
+    # distance verification (max Pauli weight to search; for KL-implied d=2t+1
+    # set this to 2t so a >=2t+1 lower bound is reported when the search finds no
+    # logical of weight <= 2t)
+    distance_max_weight: int = 3
 
 
 def _scenarios() -> list[Scenario]:
@@ -210,6 +214,63 @@ def _d3_target_scenarios() -> list["Scenario"]:
         n_solution_samples=8,
     ))
 
+    return scenarios + _d5_target_scenarios()
+
+
+def _d5_target_scenarios() -> list["Scenario"]:
+    """d=5 target scenarios: weight-<=2 Paulis on all qubits.
+
+    By the Knill-Laflamme theorem, if the walk succeeds (all input error
+    products satisfy KL), the resulting code has distance >= 5 by construction.
+    distance_max_weight=4 lets compute_distance verify this explicitly (search
+    weights 1..4, find no logical, report >=5).
+
+    Only FH [[4,2]] -> d=5 is in the default bench. The bigger cases
+    (FH [[8,6]], FH [[16,14]]) did NOT converge within beam_width=8,
+    n_expansions=4, max_stabilizers=10..12 in our exploration runs --
+    [[8,6]] -> d=5 ran for 24 minutes with 60 uncorrectables remaining and
+    0/8 successful walks. They're left commented below; uncomment to retry
+    with a wider beam, more expansions, or more extra qubits."""
+    scenarios: list[Scenario] = []
+
+    # FH [[4,2]] -> aim for d=5 with 4 extra qubits (8 total).
+    # Succeeds but collapses to k=0 (all dimensions consumed by stabilizers).
+    # For a k>=1 d=5 code, allocate more extra qubits.
+    stabs, errs = make_extension_inputs(_fh_symmetries(4), total_n_qubits=8, error_weights=(1, 2))
+    scenarios.append(Scenario(
+        name="FH [[4,2]] -> d=5 (8 qubits, beam)",
+        initial_stabilizers=stabs, errors=errs,
+        extra_qubits=0,
+        method="beam_search",
+        max_stabilizers=8, beam_width=8, n_expansions_per_slot=4,
+        n_solution_samples=8,
+        distance_max_weight=4,
+    ))
+
+    # ---- Currently-failing d=5 stretch cases (uncomment to retry tuned) ----
+    #
+    # stabs, errs = make_extension_inputs(_fh_symmetries(8), total_n_qubits=14, error_weights=(1, 2))
+    # scenarios.append(Scenario(
+    #     name="FH [[8,6]] -> d=5 (14 qubits, beam)",
+    #     initial_stabilizers=stabs, errors=errs,
+    #     extra_qubits=0,
+    #     method="beam_search",
+    #     max_stabilizers=10, beam_width=8, n_expansions_per_slot=4,
+    #     n_solution_samples=8,
+    #     distance_max_weight=4,
+    # ))
+    #
+    # stabs, errs = make_extension_inputs(_fh_symmetries(16), total_n_qubits=24, error_weights=(1, 2))
+    # scenarios.append(Scenario(
+    #     name="FH [[16,14]] -> d=5 (24 qubits, beam)",
+    #     initial_stabilizers=stabs, errors=errs,
+    #     extra_qubits=0,
+    #     method="beam_search",
+    #     max_stabilizers=12, beam_width=8, n_expansions_per_slot=4,
+    #     n_solution_samples=8,
+    #     distance_max_weight=4,
+    # ))
+
     return scenarios
 
 
@@ -225,6 +286,7 @@ def _run(sc: Scenario):
             n_expansions_per_slot=sc.n_expansions_per_slot,
             n_solution_samples=sc.n_solution_samples if sc.n_solution_samples > 1 else 8,
             seed_val=sc.seed_val,
+            distance_max_weight=sc.distance_max_weight,
         )
     else:
         result = random_walk_extend(
@@ -235,6 +297,7 @@ def _run(sc: Scenario):
             max_walks=sc.max_walks,
             n_solution_samples=sc.n_solution_samples,
             seed_val=sc.seed_val,
+            distance_max_weight=sc.distance_max_weight,
         )
     elapsed = time.perf_counter() - t0
     n = max(len(g) for g in result.code) if result.code else 0
@@ -246,8 +309,10 @@ def _format_distance(result):
     if result.distance is None:
         return "  -"
     if result.distance_is_exact:
-        return f"{result.distance:>3d}"
-    return f">={result.distance - 1:>2d}"
+        return f"{result.distance:>4d}"
+    # Not exact: compute_distance returns max_weight + 1, meaning the true
+    # distance is >= max_weight + 1.
+    return f">={result.distance}"
 
 
 def main():
