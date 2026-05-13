@@ -199,8 +199,86 @@ def knill_laflamme_correctable_cost_function(generators: list[stim.PauliString],
     return total_loss
 
 
-def get_uncorrectable_errors(generators: list[stim.PauliString], errors: list[stim.PauliString]) -> list[stim.PauliString]:
-    """Get the products of errors that the code cannot correct."""
+def get_uncorrectable_errors(
+    generators: list[stim.PauliString], errors: list[stim.PauliString],
+) -> list[stim.PauliString]:
+    """Get the products `e_i * e_j` that the code cannot correct (Knill-Laflamme
+    violators).
+
+    Vectorized: build the (N_errors x n_gens) anti-commutation matrix in one
+    numpy boolean matrix product via the symplectic formula
+        AC[i, m] = (e_i.x . g_m.z) XOR (e_i.z . g_m.x)   (mod 2)
+    Each error has a "syndrome" given by its row of AC. The product e_i * e_j
+    anticommutes with at least one generator iff AC[i] != AC[j] (since
+    anticommutation is linear in the symplectic representation). Pairs with
+    different syndromes are therefore correctable and can be skipped; only
+    same-syndrome pairs need the (relatively expensive) is_in_stabilizer_group
+    check, dropping the membership-check count from O(N^2) to roughly
+    O(N^2 / 2^k) where k is the number of stabilizers.
+
+    The outer (i, j) iteration order matches the legacy implementation kept as
+    `_legacy_get_uncorrectable_errors`, so seeded random walks behave
+    bit-identically."""
+
+    if not generators or not errors:
+        return []
+
+    n = max(
+        max(len(g) for g in generators),
+        max(len(e) for e in errors),
+    )
+    n_gens = len(generators)
+    n_errs = len(errors)
+
+    g_x = np.zeros((n_gens, n), dtype=np.uint8)
+    g_z = np.zeros((n_gens, n), dtype=np.uint8)
+    for m, g in enumerate(generators):
+        gp = g if len(g) == n else g + stim.PauliString("_" * (n - len(g)))
+        x, z = gp.to_numpy()
+        g_x[m] = x
+        g_z[m] = z
+
+    e_x = np.zeros((n_errs, n), dtype=np.uint8)
+    e_z = np.zeros((n_errs, n), dtype=np.uint8)
+    padded_errors: list[stim.PauliString] = []
+    for i, e in enumerate(errors):
+        ep = e if len(e) == n else e + stim.PauliString("_" * (n - len(e)))
+        padded_errors.append(ep)
+        x, z = ep.to_numpy()
+        e_x[i] = x
+        e_z[i] = z
+
+    # Symplectic anticommutation: integer-sum of element-wise AND, taken mod 2.
+    ac = ((e_x @ g_z.T) ^ (e_z @ g_x.T)) & 1   # shape (N, K)
+
+    # Pack each row of ac into an integer for fast equality.
+    if n_gens <= 64:
+        powers = (1 << np.arange(n_gens, dtype=np.uint64))
+        row_ids = (ac.astype(np.uint64) @ powers).tolist()
+    else:
+        row_ids = [hash(tuple(row.tolist())) for row in ac]
+
+    # Bucket error indices by their syndrome. Buckets preserve insertion order
+    # (Python dicts since 3.7), so iterating syndrome_groups[row_ids[i]] yields
+    # j's in ascending order, matching the legacy nested-loop pattern.
+    syndrome_groups: dict[int, list[int]] = {}
+    for i, rid in enumerate(row_ids):
+        syndrome_groups.setdefault(rid, []).append(i)
+
+    uncorrectable: list[stim.PauliString] = []
+    for i in range(n_errs):
+        for j in syndrome_groups[row_ids[i]]:
+            e_prod = padded_errors[i] * padded_errors[j]
+            if not is_in_stabilizer_group(e_prod, generators):
+                uncorrectable.append(e_prod)
+    return uncorrectable
+
+
+def _legacy_get_uncorrectable_errors(
+    generators: list[stim.PauliString], errors: list[stim.PauliString],
+) -> list[stim.PauliString]:
+    """Original O(N^2 * (K + membership)) implementation. Kept for cross-validating
+    the vectorized `get_uncorrectable_errors` and for benchmarking."""
 
     uncorrectable_errs = []
     for i, e_i in enumerate(errors):

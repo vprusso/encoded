@@ -6,6 +6,7 @@ from encoded.add_stabilizers import (
     _form_linear_system, add_stabilizer, is_in_stabilizer_group, knill_laflamme_cost_function,
     build_code_randomly, prune_duplicate_pauli_strings, random_depth_first_search,
     _legacy_group_membership_check, random_walk_extend, get_uncorrectable_errors,
+    _legacy_get_uncorrectable_errors,
     beam_search_extend, compute_distance,
 )
 
@@ -469,6 +470,63 @@ class TestRandomWalkExtend(unittest.TestCase):
         self.assertFalse(result.succeeded)
         self.assertEqual(result.successful_walks, 0)
         self.assertGreater(result.uncorrectables_remaining, 0)
+
+
+class TestGetUncorrectableErrorsAgreesWithLegacy(unittest.TestCase):
+    """The vectorized get_uncorrectable_errors must produce a list of Pauli strings
+    whose underlying X/Z patterns match the legacy implementation, in the same order,
+    on every stress input. Stim's PauliString multiplication can produce different
+    overall phases depending on operand order, so we compare the X/Z bit patterns
+    rather than full PauliString equality."""
+
+    @staticmethod
+    def _xz_pattern(p):
+        x, z = p.to_numpy()
+        return (tuple(x.tolist()), tuple(z.tolist()))
+
+    @staticmethod
+    def _random_pauli(rng, nq):
+        return stim.PauliString("".join(rng.choice("_XYZ") for _ in range(nq)))
+
+    def _assert_agreement(self, nq, n_gens, n_errs, seed_val):
+        rng = random.Random(seed_val)
+        generators = [self._random_pauli(rng, nq) for _ in range(n_gens)]
+        errors = [self._random_pauli(rng, nq) for _ in range(n_errs)]
+        fast = get_uncorrectable_errors(generators, errors)
+        legacy = _legacy_get_uncorrectable_errors(generators, errors)
+        self.assertEqual(len(fast), len(legacy),
+                         msg=f"length mismatch: fast={len(fast)} legacy={len(legacy)}")
+        for i, (f, l) in enumerate(zip(fast, legacy)):
+            self.assertEqual(self._xz_pattern(f), self._xz_pattern(l),
+                             msg=f"index {i}: fast={f} legacy={l}")
+
+    def test_random_4qubit(self):
+        self._assert_agreement(nq=4, n_gens=2, n_errs=10, seed_val=1)
+
+    def test_random_5qubit(self):
+        self._assert_agreement(nq=5, n_gens=3, n_errs=12, seed_val=2)
+
+    def test_5_qubit_perfect_with_single_qubit_errors(self):
+        """A concrete known scenario: 5-qubit perfect code generators + all
+        single-qubit Pauli errors. Should produce identical (and empty after KL)
+        results between fast and legacy."""
+        generators = [
+            stim.PauliString("XZZX_"),
+            stim.PauliString("_XZZX"),
+            stim.PauliString("X_XZZ"),
+            stim.PauliString("ZX_XZ"),
+        ]
+        errors = [stim.PauliString("_" * 5)]
+        for i in range(5):
+            for p in (1, 2, 3):
+                mask = [0] * 5
+                mask[i] = p
+                errors.append(stim.PauliString(mask))
+        fast = get_uncorrectable_errors(generators, errors)
+        legacy = _legacy_get_uncorrectable_errors(generators, errors)
+        self.assertEqual(len(fast), len(legacy))
+        for f, l in zip(fast, legacy):
+            self.assertEqual(self._xz_pattern(f), self._xz_pattern(l))
 
 
 class TestComputeDistance(unittest.TestCase):
