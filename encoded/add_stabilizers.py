@@ -3,6 +3,7 @@ from warnings import warn
 from dataclasses import dataclass, field
 import itertools
 import functools
+import time
 from random import randrange, seed, sample
 from copy import deepcopy
 import numpy as np
@@ -515,6 +516,7 @@ def random_walk_extend(
     n_solution_samples: int = 1,
     seed_val: int = 137,
     distance_max_weight: int = 3,
+    verbose: bool = False,
 ) -> WalkResult:
     """Slide-33 random walk: at each step pick a random uncorrectable error product
     and a random solution from the resulting affine system, add it to the group,
@@ -576,7 +578,8 @@ def random_walk_extend(
     best_key: tuple[int, int] = (initial_uncorrectables, 0)  # (remaining, added)
     walks: list[PerWalkResult] = []
 
-    for _ in range(max_walks):
+    t_start = time.perf_counter()
+    for walk_idx in range(max_walks):
         temp = deepcopy(stabilizers)
         for _ in range(max_stabilizers_per_walk):
             uncorrectables = get_uncorrectable_errors(temp, errors)
@@ -603,6 +606,17 @@ def random_walk_extend(
         if key < best_key:
             best_code = deepcopy(temp)
             best_key = key
+
+        if verbose:
+            n_succ = sum(1 for w in walks if w.succeeded)
+            print(
+                f"[random_walk_extend walk={walk_idx + 1}/{max_walks} "
+                f"elapsed={time.perf_counter() - t_start:.1f}s] "
+                f"best: remaining={best_key[0]} added={best_key[1]} | "
+                f"this walk: remaining={remaining} added={added} | "
+                f"succeeded {n_succ}/{walk_idx + 1}",
+                flush=True,
+            )
 
     succeeded = best_key[0] == 0
     distance, distance_exact = (None, True)
@@ -632,6 +646,7 @@ def beam_search_extend(
     n_solution_samples: int = 8,
     seed_val: int = 137,
     distance_max_weight: int = 3,
+    verbose: bool = False,
 ) -> WalkResult:
     """Beam-search variant of `random_walk_extend`.
 
@@ -676,6 +691,13 @@ def beam_search_extend(
     best_code = deepcopy(stabilizers)
     best_key: tuple[int, int] = (len(initial_uncorr), 0)
 
+    t_start = time.perf_counter()
+    if verbose:
+        print(
+            f"[beam_search_extend depth=0/{max_stabilizers} elapsed=0.0s] "
+            f"initial: remaining={best_key[0]} | beam: 1 slot",
+            flush=True,
+        )
     for _depth in range(max_stabilizers):
         next_beam: list[tuple[list[stim.PauliString], list[stim.PauliString]]] = []
 
@@ -715,6 +737,16 @@ def beam_search_extend(
             if key < best_key:
                 best_key = key
                 best_code = deepcopy(slot_stabs)
+
+        if verbose:
+            n_succ_in_beam = sum(1 for _, u in beam if not u)
+            print(
+                f"[beam_search_extend depth={_depth + 1}/{max_stabilizers} "
+                f"elapsed={time.perf_counter() - t_start:.1f}s] "
+                f"best: remaining={best_key[0]} added={best_key[1]} | "
+                f"beam: {len(beam)} slots, {n_succ_in_beam} succeeded",
+                flush=True,
+            )
 
         # Early termination: if every slot in the beam is fully resolved, we're done.
         if all(not u for _, u in beam):
