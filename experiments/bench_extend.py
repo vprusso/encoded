@@ -145,18 +145,27 @@ def _run(sc: Scenario):
     return n, k, result, elapsed
 
 
+def _format_distance(result):
+    if result.distance is None:
+        return "  -"
+    if result.distance_is_exact:
+        return f"{result.distance:>3d}"
+    return f">={result.distance - 1:>2d}"
+
+
 def main():
     print(
-        f"{'scenario':<46} {'n':>3} {'k':>3} {'added':>5} {'rem':>4} "
-        f"{'ok?':>4} {'time(s)':>8} {'succ/walks':>11}",
+        f"{'scenario':<46} {'n':>3} {'k':>3} {'d':>4} {'added':>5} "
+        f"{'rem':>4} {'ok?':>4} {'time(s)':>8} {'succ/walks':>11}",
         flush=True,
     )
-    print("-" * 100, flush=True)
+    print("-" * 110, flush=True)
     for sc in _scenarios():
         n, k, result, elapsed = _run(sc)
         ok = "yes" if result.succeeded else "NO"
+        d_str = _format_distance(result)
         print(
-            f"{sc.name:<46} {n:>3d} {k:>3d} {result.n_stabilizers_added:>5d} "
+            f"{sc.name:<46} {n:>3d} {k:>3d} {d_str:>4} {result.n_stabilizers_added:>5d} "
             f"{result.uncorrectables_remaining:>4d} {ok:>4} {elapsed:>8.2f} "
             f"{result.successful_walks:>3d}/{result.n_walks:<7d}",
             flush=True,

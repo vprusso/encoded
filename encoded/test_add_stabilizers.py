@@ -6,7 +6,7 @@ from encoded.add_stabilizers import (
     _form_linear_system, add_stabilizer, is_in_stabilizer_group, knill_laflamme_cost_function,
     build_code_randomly, prune_duplicate_pauli_strings, random_depth_first_search,
     _legacy_group_membership_check, random_walk_extend, get_uncorrectable_errors,
-    beam_search_extend,
+    beam_search_extend, compute_distance,
 )
 
 class TestLinearSystem(unittest.TestCase):
@@ -469,6 +469,51 @@ class TestRandomWalkExtend(unittest.TestCase):
         self.assertFalse(result.succeeded)
         self.assertEqual(result.successful_walks, 0)
         self.assertGreater(result.uncorrectables_remaining, 0)
+
+
+class TestComputeDistance(unittest.TestCase):
+    """compute_distance: brute-force enumeration over Paulis of weight 1..max_weight,
+    returning the lightest non-trivial logical operator's weight."""
+
+    def test_repetition_3_qubit(self):
+        """[[3,1,1]] bit-flip code: stabilizers ZZI, IZZ. Logical Z_L = Z_i (any i)
+        is weight 1, so distance = 1."""
+        stabilizers = [stim.PauliString("ZZ_"), stim.PauliString("_ZZ")]
+        d, exact = compute_distance(stabilizers, max_weight=3)
+        self.assertEqual(d, 1)
+        self.assertTrue(exact)
+
+    def test_phase_flip_3_qubit(self):
+        """[[3,1,1]] phase-flip code: stabilizers XX_, _XX. Logical X_L = X_i is
+        weight 1, so distance = 1."""
+        stabilizers = [stim.PauliString("XX_"), stim.PauliString("_XX")]
+        d, exact = compute_distance(stabilizers, max_weight=3)
+        self.assertEqual(d, 1)
+        self.assertTrue(exact)
+
+    def test_5_qubit_perfect_code(self):
+        """The canonical [[5,1,3]] perfect code. Distance = 3."""
+        stabilizers = [
+            stim.PauliString("XZZX_"),
+            stim.PauliString("_XZZX"),
+            stim.PauliString("X_XZZ"),
+            stim.PauliString("ZX_XZ"),
+        ]
+        d, exact = compute_distance(stabilizers, max_weight=3)
+        self.assertEqual(d, 3)
+        self.assertTrue(exact)
+
+    def test_lower_bound_when_max_weight_too_small(self):
+        """If max_weight is lower than the actual distance, return (max_weight+1, False)."""
+        stabilizers = [
+            stim.PauliString("XZZX_"),
+            stim.PauliString("_XZZX"),
+            stim.PauliString("X_XZZ"),
+            stim.PauliString("ZX_XZ"),
+        ]
+        d, exact = compute_distance(stabilizers, max_weight=2)
+        self.assertEqual(d, 3)  # max_weight + 1
+        self.assertFalse(exact)
 
 
 class TestBeamSearchExtend(unittest.TestCase):
