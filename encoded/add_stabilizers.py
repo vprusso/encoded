@@ -809,6 +809,302 @@ def beam_search_extend(
     )
 
 
+def dfs_extend(
+    stabilizers: list[stim.PauliString],
+    errors: list[stim.PauliString],
+    extra_support: stim.PauliString | None = None,
+    extra_qubits: int = 0,
+    max_stabilizers: int = 6,
+    n_candidates_per_node: int = 4,
+    seed_val: int = 137,
+    distance_max_weight: int = 3,
+    connectivity: dict[int, set[int]] | None = None,
+    max_seconds: float = 120.0,
+    verbose: bool = False,
+) -> WalkResult:
+    """Depth-first search with branch-and-bound on the (which-error x which-solution)
+    tree, with iterative-deepening-style pruning on the stabilizer-count budget.
+
+    Differs from random_walk_extend / beam_search_extend in one fundamental way:
+    DFS *backtracks*. Random walks and beam search explore forward only — once a
+    walk picks a stabilizer, that commitment is permanent until the walk ends
+    (random walk) or the slot is pruned (beam). DFS retreats from dead ends and
+    tries alternatives at earlier depths.
+
+    Combined with branch-and-bound (prune any subtree that can't possibly produce
+    a shorter solution than the best already found) and a hard `max_stabilizers`
+    cap, this gives a clean "exists a k>=initial_count + 1 - max_stabilizers
+    extension?" answer rather than just "I tried hard and failed."
+
+    At each node:
+      1. Compute uncorrectables for the current partial code; update best-so-far.
+      2. Prune if depth >= max_stabilizers, or if the best-known is already a
+         valid solution with <= depth+1 stabilizers (branch-and-bound).
+      3. Sample multiple candidate next-stabilizers via the existing
+         max-coverage scorer; recurse on the top n_candidates_per_node in
+         descending score order (greedy-first).
+      4. Cut off via wall-clock budget `max_seconds`; return best-so-far on
+         timeout.
+
+    Returns a WalkResult; n_walks is repurposed to "tree nodes visited."""
+
+    if extra_qubits > 0 and extra_support is not None:
+        raise ValueError(
+            "Specify either `extra_qubits` or `extra_support`, not both."
+        )
+
+    if extra_qubits > 0:
+        pad = stim.PauliString("_" * extra_qubits)
+        stabilizers = [g + pad for g in stabilizers]
+        errors = [e + pad for e in errors]
+
+    seed(seed_val)
+    initial_count = len(stabilizers)
+    initial_uncorr = get_uncorrectable_errors(stabilizers, errors)
+
+    state = {
+        "best_code": deepcopy(stabilizers),
+        "best_remaining": len(initial_uncorr),
+        "best_added": 0,
+        "nodes_explored": 0,
+        "timed_out": False,
+    }
+    t_start = time.perf_counter()
+
+    def dfs(stabs: list[stim.PauliString], uncorr: list[stim.PauliString], depth: int) -> None:
+        if time.perf_counter() - t_start > max_seconds:
+            state["timed_out"] = True
+            return
+        state["nodes_explored"] += 1
+
+        remaining = len(uncorr)
+        key = (remaining, depth)
+        if key < (state["best_remaining"], state["best_added"]):
+            state["best_code"] = deepcopy(stabs)
+            state["best_remaining"] = remaining
+            state["best_added"] = depth
+            if verbose:
+                print(
+                    f"[dfs_extend new best depth={depth} "
+                    f"elapsed={time.perf_counter() - t_start:.1f}s nodes={state['nodes_explored']}] "
+                    f"remaining={remaining} added={depth}",
+                    flush=True,
+                )
+
+        if remaining == 0:
+            return
+        if depth >= max_stabilizers:
+            return
+        # Branch-and-bound: if best is already a valid solution no longer than
+        # depth+1, this subtree can't help.
+        if state["best_remaining"] == 0 and depth + 1 >= state["best_added"]:
+            return
+
+        # Pick a target error and sample candidate next-stabilizers.
+        err = uncorr[randrange(0, len(uncorr))]
+        A, b = _form_linear_system(stabs, [err])
+        A_rref, b_rref = _boolean_rref(A, b)
+
+        attempts = max(n_candidates_per_node * 4, 16)
+        seen: set[tuple] = set()
+        candidates: list[tuple[int, stim.PauliString, stim.PauliString]] = []
+        for _ in range(attempts):
+            x = sample_random_solution(A_rref, b_rref)
+            xs = x[: x.size // 2]
+            zs = x[x.size // 2 :]
+            cache_key = (tuple(xs.tolist()), tuple(zs.tolist()))
+            if cache_key in seen:
+                continue
+            seen.add(cache_key)
+            ps = stim.PauliString.from_numpy(xs=xs, zs=zs)
+            full = ps + extra_support if extra_support is not None else ps
+            if connectivity is not None and not has_connected_support(full, connectivity):
+                continue
+            score = sum(1 for e in uncorr if not full.commutes(e))
+            candidates.append((score, ps, full))
+
+        # Highest score first — greedy ordering speeds finding any solution.
+        candidates.sort(key=lambda t: -t[0])
+
+        for _, ps, full in candidates[:n_candidates_per_node]:
+            if extra_support is not None:
+                id_extra = stim.PauliString("I" * len(extra_support))
+                new_stabs = [g + id_extra for g in stabs] + [full]
+            else:
+                new_stabs = stabs + [full]
+            new_uncorr = get_uncorrectable_errors(new_stabs, errors)
+            dfs(new_stabs, new_uncorr, depth + 1)
+            if state["timed_out"]:
+                return
+
+    dfs(deepcopy(stabilizers), initial_uncorr, 0)
+
+    succeeded = state["best_remaining"] == 0
+    distance, distance_exact = (None, True)
+    if succeeded:
+        distance, distance_exact = compute_distance(
+            state["best_code"], max_weight=distance_max_weight,
+        )
+    return WalkResult(
+        code=state["best_code"],
+        succeeded=succeeded,
+        uncorrectables_remaining=state["best_remaining"],
+        n_stabilizers_added=state["best_added"],
+        n_walks=state["nodes_explored"],
+        successful_walks=1 if succeeded else 0,
+        walks=[],
+        distance=distance,
+        distance_is_exact=distance_exact,
+    )
+
+
+def simulated_annealing_extend(
+    stabilizers: list[stim.PauliString],
+    errors: list[stim.PauliString],
+    extra_support: stim.PauliString | None = None,
+    extra_qubits: int = 0,
+    target_stabilizers: int = 6,
+    n_iterations: int = 200,
+    initial_temperature: float = 5.0,
+    cooling: float = 0.99,
+    seed_val: int = 137,
+    distance_max_weight: int = 3,
+    connectivity: dict[int, set[int]] | None = None,
+    verbose: bool = False,
+) -> WalkResult:
+    """Simulated annealing over fixed-size extensions.
+
+    Maintains a single "candidate" extension of exactly `target_stabilizers`
+    added stabilizers, scored by uncorrectable_count. At each iteration, picks a
+    random one of the added stabilizers and swaps it for a freshly-sampled
+    replacement (drawn from the constraint subspace for some uncorrectable
+    error). Accepts unconditionally if the new uncorrectable count is lower;
+    otherwise accepts with probability exp(-delta/T). Cools T geometrically.
+
+    Differs from random walk + beam + DFS: those build the extension incrementally,
+    each commitment shrinks the search space. SA works in a *fixed-size* space and
+    explores neighborhoods via swaps -- naturally escapes the local minima beam
+    search gets stuck in, at the cost of needing the target size up front.
+
+    `target_stabilizers` = number of stabilizers to add (so the resulting code
+    has `initial_count + target_stabilizers` stabilizers and k = n -
+    (initial_count + target_stabilizers) logical qubits). Set explicitly to
+    target a specific [[n,k,d]].
+    """
+
+    if extra_qubits > 0 and extra_support is not None:
+        raise ValueError(
+            "Specify either `extra_qubits` or `extra_support`, not both."
+        )
+    if extra_qubits > 0:
+        pad = stim.PauliString("_" * extra_qubits)
+        stabilizers = [g + pad for g in stabilizers]
+        errors = [e + pad for e in errors]
+
+    seed(seed_val)
+    initial_count = len(stabilizers)
+
+    def sample_one_stabilizer(stabs, target_err):
+        """Sample a single candidate stabilizer that anticommutes with target_err
+        and commutes with all current stabilizers, respecting connectivity if set."""
+        A, b = _form_linear_system(stabs, [target_err])
+        A_rref, b_rref = _boolean_rref(A, b)
+        for _ in range(64):
+            x = sample_random_solution(A_rref, b_rref)
+            ps = stim.PauliString.from_numpy(xs=x[: x.size // 2], zs=x[x.size // 2 :])
+            full = ps + extra_support if extra_support is not None else ps
+            if connectivity is None or has_connected_support(full, connectivity):
+                return full
+        return None
+
+    def make_extended(stabs, full_new):
+        if extra_support is not None:
+            id_extra = stim.PauliString("I" * len(extra_support))
+            return [g + id_extra for g in stabs] + [full_new]
+        return stabs + [full_new]
+
+    # Initial state: target_stabilizers random additions on top of `stabilizers`.
+    current = deepcopy(stabilizers)
+    failed_init = False
+    for _ in range(target_stabilizers):
+        uncorr = get_uncorrectable_errors(current, errors)
+        if not uncorr:
+            # Already correctable before we hit the target size; pad with identity?
+            # Just stop early; SA on a smaller code is fine.
+            break
+        err = uncorr[randrange(0, len(uncorr))]
+        full_new = sample_one_stabilizer(current, err)
+        if full_new is None:
+            failed_init = True
+            break
+        current = make_extended(current, full_new)
+
+    current_score = len(get_uncorrectable_errors(current, errors)) if not failed_init else 10 ** 9
+    best_code = deepcopy(current)
+    best_score = current_score
+    T = initial_temperature
+    t_start = time.perf_counter()
+
+    for it in range(n_iterations):
+        # Pick a random added stabilizer to swap out
+        n_added = len(current) - initial_count
+        if n_added == 0:
+            break
+        swap_idx = initial_count + randrange(0, n_added)
+
+        # Drop it from the partial code
+        partial = current[:swap_idx] + current[swap_idx + 1 :]
+        uncorr = get_uncorrectable_errors(partial, errors)
+        if not uncorr:
+            # Partial is already correctable -- great, accept it
+            new_state = partial
+            new_score = 0
+        else:
+            err = uncorr[randrange(0, len(uncorr))]
+            full_new = sample_one_stabilizer(partial, err)
+            if full_new is None:
+                continue
+            new_state = make_extended(partial, full_new)
+            new_score = len(get_uncorrectable_errors(new_state, errors))
+
+        delta = new_score - current_score
+        accept = delta <= 0 or (np.random.random() < np.exp(-delta / max(T, 1e-9)))
+        if accept:
+            current = new_state
+            current_score = new_score
+            if current_score < best_score:
+                best_score = current_score
+                best_code = deepcopy(current)
+                if verbose:
+                    print(
+                        f"[sa_extend iter={it} T={T:.3f} "
+                        f"elapsed={time.perf_counter() - t_start:.1f}s] "
+                        f"new best: remaining={best_score}",
+                        flush=True,
+                    )
+                if best_score == 0:
+                    break  # solution found
+        T *= cooling
+
+    succeeded = best_score == 0
+    distance, distance_exact = (None, True)
+    if succeeded:
+        distance, distance_exact = compute_distance(
+            best_code, max_weight=distance_max_weight,
+        )
+    return WalkResult(
+        code=best_code,
+        succeeded=succeeded,
+        uncorrectables_remaining=best_score,
+        n_stabilizers_added=len(best_code) - initial_count,
+        n_walks=n_iterations,
+        successful_walks=1 if succeeded else 0,
+        walks=[],
+        distance=distance,
+        distance_is_exact=distance_exact,
+    )
+
+
 if __name__ == "__main__":
     stabilizers = [stim.PauliString("ZZ")]
     errors = [stim.PauliString("X_"), stim.PauliString("_X")]
