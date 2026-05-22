@@ -9,7 +9,7 @@ from copy import deepcopy
 import numpy as np
 import stim
 from encoded.decompose_operators import generators_to_matrix
-from encoded.binary_linalg import solve_boolean_system, _boolean_rref, enumerate_all_solutions, system_has_solutions, sample_random_solution
+from encoded.binary_linalg import solve_boolean_system, _boolean_rref, enumerate_all_solutions, system_has_solutions, sample_random_solution, sample_random_solution_biased
 from encoded.connectivity import has_connected_support
 
 
@@ -489,6 +489,7 @@ def _build_max_coverage_selector(
     extra_support: stim.PauliString | None,
     n_samples: int,
     connectivity: dict[int, set[int]] | None = None,
+    sampling_bias: float = 0.5,
 ):
     """Build a solution-selection callback for add_stabilizer that, given the
     affine solution space (A_rref, b_rref), samples `n_samples` candidate
@@ -499,13 +500,21 @@ def _build_max_coverage_selector(
     When `connectivity` is given, samples whose non-identity support violates the
     connectivity graph are rejected before scoring. If no connectivity-valid
     sample is found within `n_samples` tries, raises NoConnectivityValidSample
-    so the caller can skip this expansion."""
+    so the caller can skip this expansion.
+
+    `sampling_bias` controls the symplectic-vector sampling distribution:
+        0.5  = uniform (default; bit-identical to old behavior under same seed)
+        <0.5 = biased toward sparser solutions (lower Pauli weight)
+        >0.5 = biased toward denser solutions"""
 
     def selector(A_rref: np.ndarray, b_rref: np.ndarray) -> np.ndarray:
         best_x = None
         best_score = -1
         for _ in range(n_samples):
-            x = sample_random_solution(A_rref, b_rref)
+            if sampling_bias == 0.5:
+                x = sample_random_solution(A_rref, b_rref)
+            else:
+                x = sample_random_solution_biased(A_rref, b_rref, bias=sampling_bias)
             candidate = stim.PauliString.from_numpy(
                 xs=x[:x.size // 2], zs=x[x.size // 2:],
             )
@@ -537,6 +546,7 @@ def random_walk_extend(
     distance_max_weight: int = 3,
     verbose: bool = False,
     connectivity: dict[int, set[int]] | None = None,
+    sampling_bias: float = 0.5,
 ) -> WalkResult:
     """Slide-33 random walk: at each step pick a random uncorrectable error product
     and a random solution from the resulting affine system, add it to the group,
@@ -611,10 +621,11 @@ def random_walk_extend(
             if not uncorrectables:
                 break
             new_err = uncorrectables[randrange(0, len(uncorrectables))]
-            if effective_samples > 1 or connectivity is not None:
+            if effective_samples > 1 or connectivity is not None or sampling_bias != 0.5:
                 selector = _build_max_coverage_selector(
                     uncorrectables, extra_support, effective_samples,
                     connectivity=connectivity,
+                    sampling_bias=sampling_bias,
                 )
                 try:
                     temp = add_stabilizer(
@@ -678,6 +689,7 @@ def beam_search_extend(
     distance_max_weight: int = 3,
     verbose: bool = False,
     connectivity: dict[int, set[int]] | None = None,
+    sampling_bias: float = 0.5,
 ) -> WalkResult:
     """Beam-search variant of `random_walk_extend`.
 
@@ -744,10 +756,11 @@ def beam_search_extend(
             )
             for _ in range(n_expansions_per_slot):
                 err = slot_uncorr[randrange(0, len(slot_uncorr))]
-                if effective_samples > 1 or connectivity is not None:
+                if effective_samples > 1 or connectivity is not None or sampling_bias != 0.5:
                     selector = _build_max_coverage_selector(
                         slot_uncorr, extra_support, effective_samples,
                         connectivity=connectivity,
+                        sampling_bias=sampling_bias,
                     )
                     try:
                         new_stabs = add_stabilizer(

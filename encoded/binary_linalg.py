@@ -228,6 +228,34 @@ def enumerate_all_solutions(A: np.ndarray, b: np.ndarray) -> list[np.ndarray]:
     return solutions
 
 
+def sample_random_solution_biased(
+    A_rref: np.ndarray, b_rref: np.ndarray, bias: float = 0.5,
+) -> np.ndarray:
+    """Like `sample_random_solution` but samples each free variable independently
+    with probability `bias` of being True.
+
+    `bias=0.5` gives the same uniform distribution as `sample_random_solution`
+    (asymptotically; different RNG path, so not bit-identical under the same seed).
+    `bias < 0.5` biases toward sparser symplectic vectors -> lower-Pauli-weight
+    stabilizers. `bias > 0.5` biases toward higher weight.
+
+    Useful when uniform sampling has been shown to consistently miss the
+    low-weight stabilizers that "good" codes typically use."""
+
+    import random as _random
+
+    pivots = _pivot_locations(A_rref)
+    pivot_columns = {t[1] for t in pivots}
+    free_columns = sorted(j for j in range(A_rref.shape[1]) if j not in pivot_columns)
+    n_free = len(free_columns)
+
+    if n_free == 0:
+        return solve_with_known_values(A_rref, b_rref, {})
+
+    known = {j: (_random.random() < bias) for j in free_columns}
+    return solve_with_known_values(A_rref, b_rref, known)
+
+
 def sample_random_solution(A_rref: np.ndarray, b_rref: np.ndarray) -> np.ndarray:
     """Sample one solution uniformly from the affine subspace of solutions to
     A_rref @ x = b_rref over GF(2). A_rref must be in RREF; behavior is undefined
